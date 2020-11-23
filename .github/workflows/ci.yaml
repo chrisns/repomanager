@@ -1,0 +1,47 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: actions/setup-node@v2.1.2
+        with:
+          node-version: 12.x
+
+      - name: Cache node modules
+        id: cache-node-modules
+        uses: actions/cache@v2.1.2
+        with:
+          path: node_modules
+          key: npm-${{ hashFiles('package-lock.json') }}
+
+      - name: NPM Install
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm install
+
+      - name: NPM Lint
+        run: npm run lint
+
+      - name: Build
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        run: npm run build
+
+      - name: Test
+        run: npm run test
+
+      - name: Generate coverage report
+        run: |
+          npm run coverage
+          npm run record-coverage
+
+      - name: Coveralls
+        uses: coverallsapp/github-action@master
+        with:
+          github-token: ${{ secrets.github_token }}
