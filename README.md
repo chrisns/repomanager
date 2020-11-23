@@ -57,18 +57,18 @@ files:
 
 You only really need to do this if you don't trust me, want to run on-prem GitHub Enterprise or similar use case.
 
-1. Create a new GitHub App: https://github.com/settings/apps/new
+1. Create a new GitHub App: <https://github.com/settings/apps/new>
 
 - Use a temporary Webhook URL
 
-2. Download your GitHub App Private Key (i.e. `.pem` file)
-3. Configure this project
+1. Download your GitHub App Private Key (i.e. `.pem` file)
+1. Configure this project
 
 - Move `.pem` into this project and change `CERT` variable from `serverless.yml` if required
 - Change `APP_ID` to match your new GitHub App
 
-4. Deploy this project. Check out https://serverless.com/framework/docs/getting-started/ for details.
-5. Update your GitHub App's Webhook URL
+1. Deploy this project. Check out <https://serverless.com/framework/docs/getting-started/> for details.
+1. Update your GitHub App's Webhook URL
 
 ## TODO
 
