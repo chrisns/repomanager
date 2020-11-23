@@ -1,0 +1,29 @@
+{
+  "name": "repomanager",
+  "version": "1.0.0",
+  "description": "GitHub App powered by AWS Lambda",
+  "main": "handler.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chrisns/repomanager.git"
+  },
+  "author": "C Nesbitt-Smith",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/chrisns/repomanager/issues"
+  },
+  "homepage": "https://github.com/chrisns/repomanager#readme",
+  "devDependencies": {
+    "serverless": "^2.12.0"
+  },
+  "dependencies": {
+    "@octokit/auth-app": "^2.10.2",
+    "@octokit/plugin-paginate-rest": "^2.6.0",
+    "@octokit/rest": "^18.0.9",
+    "octokit-plugin-create-pull-request": "^3.9.0",
+    "yaml": "^1.10.0"
+  }
+}
