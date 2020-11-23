@@ -6,6 +6,7 @@
 [![ci](https://github.com/chrisns/repomanager/workflows/ci/badge.svg?branch=master)](https://github.com/chrisns/repomanager/actions?query=workflow%3Aci+branch%3Amaster)
 [![Coverage Status](https://coveralls.io/repos/github/chrisns/repomanager/badge.svg?branch=master)](https://coveralls.io/github/chrisns/repomanager?branch=master)
 [![Language grade: JavaScript](https://img.shields.io/lgtm/grade/javascript/g/chrisns/repomanager.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/chrisns/repomanager/context:javascript)
+[![Total alerts](https://img.shields.io/lgtm/alerts/g/chrisns/repomanager.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/chrisns/repomanager/alerts/)
 
 GitHub App powered by AWS Lambda to manage your repositories for you.
 
