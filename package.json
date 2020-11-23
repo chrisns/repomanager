@@ -4,6 +4,7 @@
   "description": "GitHub App powered by AWS Lambda",
   "main": "handler.js",
   "scripts": {
+    "start": "run-func handler.js cron",
     "lint": "npm-run-all lint:*",
     "lint-fix": "npm-run-all lint-fix:*",
     "lint:eslint": "eslint .",
@@ -52,6 +53,7 @@
     "@octokit/plugin-paginate-rest": "^2.6.0",
     "@octokit/rest": "^18.0.9",
     "octokit-plugin-create-pull-request": "^3.9.0",
+    "run-func": "^1.0.5",
     "yaml": "^1.10.0"
   }
 }

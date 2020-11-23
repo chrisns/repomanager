@@ -1,6 +1,5 @@
 const chai = require('chai')
 const sinon = require('sinon')
-// const _ = require('lodash')
 const rewire = require('rewire')
 chai.use(require('chai-as-promised'))
 chai.use(require('sinon-chai'))
