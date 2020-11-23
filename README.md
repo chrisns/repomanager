@@ -3,8 +3,8 @@
 ![GitHub package.json version](https://img.shields.io/github/package-json/v/chrisns/repomanager)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
 [![MIT Licence](https://badges.frapsoft.com/os/mit/mit.png?v=103)](./LICENSE)
-[![ci](https://github.com/chrisns/repomanager/workflows/ci/badge.svg?branch=main)](https://github.com/chrisns/repomanager/actions?query=workflow%3Aci+branch%3Amaster)
-[![Coverage Status](https://coveralls.io/repos/github/chrisns/repomanager/badge.svg?branch=main)](https://coveralls.io/github/chrisns/repomanager?branch=master)
+[![ci](https://github.com/chrisns/repomanager/workflows/ci/badge.svg?branch=main)](https://github.com/chrisns/repomanager/actions?query=workflow%3Aci+branch%3Amain)
+[![Coverage Status](https://coveralls.io/repos/github/chrisns/repomanager/badge.svg?branch=main)](https://coveralls.io/github/chrisns/repomanager?branch=main)
 [![Language grade: JavaScript](https://img.shields.io/lgtm/grade/javascript/g/chrisns/repomanager.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/chrisns/repomanager/context:javascript)
 
 GitHub App powered by AWS Lambda to manage your repositories for you.
