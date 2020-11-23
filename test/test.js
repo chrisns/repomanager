@@ -35,16 +35,12 @@ describe('#handler', () => {
           getContent: sinon.stub()
         }
       }
-      octomock.repos.getContent
-        .onCall(0)
-        .resolves({
-          data: { content: Buffer.from(configFromRepo).toString('base64') }
-        })
-      octomock.repos.getContent
-        .onCall(1)
-        .resolves({
-          data: { content: Buffer.from(configFromOwner).toString('base64') }
-        })
+      octomock.repos.getContent.onCall(0).resolves({
+        data: { content: Buffer.from(configFromRepo).toString('base64') }
+      })
+      octomock.repos.getContent.onCall(1).resolves({
+        data: { content: Buffer.from(configFromOwner).toString('base64') }
+      })
       return mod
         .__get__('getRepoConfig')('foo', 'bar', octomock)
         .should.eventually.eql({ bar: 'another', another: 'bar' })
