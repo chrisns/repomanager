@@ -1,12 +1,11 @@
 const YAML = require('yaml')
+const fs = require('fs')
 
 const { Octokit } = require('@octokit/rest')
 const { createPullRequest } = require('octokit-plugin-create-pull-request')
 const { paginateRest } = require('@octokit/plugin-paginate-rest')
 
 const MyOctokit = Octokit.plugin(createPullRequest).plugin(paginateRest)
-
-const fs = require('fs')
 
 const newOctokit = installationId =>
   new MyOctokit({
@@ -264,10 +263,11 @@ const getRepoConfig = async (repo, owner, octokit) => {
   }
 
   const baseConfig = YAML.parse(
-    fs.readFileSync('base-repo-config.yml').toString()
+    fs.readFileSync('./base-repo-config.yml').toString()
   )
-
   return { ...baseConfig, ...configFromOwner, ...configFromRepo }
 }
 
-cron()
+module.exports = {
+  cron
+}
