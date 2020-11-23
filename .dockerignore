@@ -1,0 +1,11 @@
+node_modules
+test
+*.md
+coverage
+.github
+.git
+wallaby.js
+*.pem
+Dockerfile
+serverless.yml
+.*
