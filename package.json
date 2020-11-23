@@ -4,7 +4,20 @@
   "description": "GitHub App powered by AWS Lambda",
   "main": "handler.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "lint": "npm-run-all lint:*",
+    "lint-fix": "npm-run-all lint-fix:*",
+    "lint:eslint": "eslint .",
+    "lint-fix:eslint": "eslint --fix  .",
+    "lint:markdownlint": "markdownlint '*.md'",
+    "lint-fix:markdownlint": "markdownlint --fix '*.md'",
+    "lint:prettier": "prettier-standard --check",
+    "lint-fix:prettier": "prettier-standard --format",
+    "test": "mocha",
+    "coverage": "c8 --clean mocha",
+    "record-coverage": "c8 report --reporter=text-lcov --all --exclude=test/* --exclude=.git --exclude=.eslintrc.js --exclude=.postcssrc.js --exclude=wallaby.js > ./coverage/lcov.info",
+    "test-watch-cover": "nodemon --exec c8 npm test",
+    "test-watch": "nodemon --exec npm test"
+
   },
   "repository": {
     "type": "git",
@@ -17,6 +30,19 @@
   },
   "homepage": "https://github.com/chrisns/repomanager#readme",
   "devDependencies": {
+    "c8": "^7.3.5",
+    "chai": "^4.2.0",
+    "chai-as-promised": "^7.1.1",
+    "eslint": "^7.14.0",
+    "eslint-config-standard": "^16.0.2",
+    "eslint-plugin-import": "^2.22.1",
+    "eslint-plugin-node": "^11.1.0",
+    "eslint-plugin-promise": "^4.2.1",
+    "markdownlint": "^0.21.1",
+    "markdownlint-cli": "^0.25.0",
+    "mocha": "^8.2.1",
+    "npm-run-all": "^4.1.5",
+    "prettier-standard": "^16.4.1",
     "serverless": "^2.12.0"
   },
   "dependencies": {
