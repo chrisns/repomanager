@@ -46,8 +46,8 @@ package:
     - .*/**
     - coverage/**
     - Dockerfile
-    - "*.md"
-    - "*.pem"
+    - '*.md'
+    - '*.pem'
     - LICENSE
     - package*
     - wallaby.js
