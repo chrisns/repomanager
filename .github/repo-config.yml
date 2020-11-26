@@ -1,4 +1,3 @@
-repo-config.yml
 branchProtection:
   - branch: '__DEFALT_BRANCH__'
     required_status_checks:
