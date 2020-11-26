@@ -1,0 +1,14 @@
+repo-config.yml
+branchProtection:
+  - branch: '__DEFALT_BRANCH__'
+    required_status_checks:
+      strict: true
+      contexts: 
+        - .github/dependabot.yml
+        - build
+        - coverage/coveralls
+        - LGTM analysis: JavaScriptRequired
+    required_linear_history: true
+    enforce_admins: false
+    required_pull_request_reviews: null
+    restrictions: null
