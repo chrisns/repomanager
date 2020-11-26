@@ -83,17 +83,26 @@ const applyConfig = async repo => {
   }
 
   if (repo.desiredConfig.branchProtection) {
-    const branchProtectionConfig = repo.desiredConfig.branchProtection.map(
-      a => {
+    const branchProtectionConfig = await Promise.all(repo.desiredConfig.branchProtection.map(
+      async a => {
         return {
           owner: repo.owner.login,
           repo: repo.name,
           ...a,
           branch:
-            a.branch === '__DEFALT_BRANCH__' ? repo.default_branch : a.branch
+            a.branch === '__DEFALT_BRANCH__' ? repo.default_branch : a.branch,
+          required_status_checks:
+            a.required_status_checks.contexts === "ALL" ? await (async () => {
+              a.required_status_checks.contexts = (await octokit.checks.listForRef({
+                owner: repo.owner.login,
+                repo: repo.name,
+                ref: `refs/heads/${a.branch === '__DEFALT_BRANCH__' ? repo.default_branch : a.branch}`,
+              })).data.check_runs.map(check => check.name)
+              return a.required_status_checks
+            })(a.required_status_checks) : a.required_status_checks,
         }
       }
-    )
+    ))
     await Promise.all(
       branchProtectionConfig.map(octokit.repos.updateBranchProtection)
     )

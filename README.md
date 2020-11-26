@@ -32,7 +32,10 @@ branchProtection:
     # __DEFALT_BRANCH__ is dynamically swapped out for the repository's default branch
     required_status_checks:
       strict: true
-      contexts: []
+      # contexts: ALL
+      # if you provide the ALL string for contexts, it will apply all the checks that were run last against the branch
+      contexts:
+        - build
     required_linear_history: true
     enforce_admins: false
     required_pull_request_reviews: null
