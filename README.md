@@ -84,7 +84,6 @@ You only really need to do this if you don't trust me, want to run on-prem GitHu
 - [ ] support permissions on repo
 - [ ] manage teams on an org
 - [ ] manage webhooks
-- [ ] parametrize the app id
 
 ## CAVEATS
 
