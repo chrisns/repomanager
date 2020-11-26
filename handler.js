@@ -82,7 +82,7 @@ const applyConfig = async repo => {
     })
   }
 
-  if (repo.desiredConfig.branchProtection) {
+  if (repo.desiredConfig.branchProtection && repo.private === false && repo.default_branch) {
     const branchProtectionConfig = await Promise.all(repo.desiredConfig.branchProtection.map(
       async a => {
         return {
@@ -93,11 +93,15 @@ const applyConfig = async repo => {
             a.branch === '__DEFALT_BRANCH__' ? repo.default_branch : a.branch,
           required_status_checks:
             a.required_status_checks.contexts === "ALL" ? await (async () => {
-              a.required_status_checks.contexts = (await octokit.checks.listForRef({
-                owner: repo.owner.login,
-                repo: repo.name,
-                ref: `refs/heads/${a.branch === '__DEFALT_BRANCH__' ? repo.default_branch : a.branch}`,
-              })).data.check_runs.map(check => check.name)
+              try {
+                a.required_status_checks.contexts = Array.from(new Set((await octokit.checks.listForRef({
+                  owner: repo.owner.login,
+                  repo: repo.name,
+                  ref: `refs/heads/${a.branch === '__DEFALT_BRANCH__' ? repo.default_branch : a.branch}`,
+                })).data.check_runs.map(check => check.name)))
+              } catch (error) {
+                a.required_status_checks.contexts = []
+              }
               return a.required_status_checks
             })(a.required_status_checks) : a.required_status_checks,
         }
