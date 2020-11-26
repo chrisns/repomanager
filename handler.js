@@ -58,7 +58,6 @@ const cron = async () => {
 
 const applyConfig = async repo => {
   const octokit = repo.octokit
-  console.log(repo.desiredConfig.repo)
   if (repo.desiredConfig.vulnerabilityAlerts === true) {
     await octokit.repos.enableVulnerabilityAlerts({
       owner: repo.owner.login,
