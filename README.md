@@ -85,3 +85,7 @@ You only really need to do this if you don't trust me, want to run on-prem GitHu
 - [ ] manage teams on an org
 - [ ] manage webhooks
 - [ ] parametrize the app id
+
+## CAVEATS
+
+Using this could do all sorts of things, destroy repos, remove access, basically anything your account can do you're granting to this app and it's author(s) and indirectly the authors of anything in the dependency chain. I'd encourage you to do your own due-diligence before enabling it. The authors/maintainers do not accept any liability of any consequences that occur.
