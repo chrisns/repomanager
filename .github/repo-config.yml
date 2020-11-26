@@ -6,7 +6,7 @@ branchProtection:
         - .github/dependabot.yml
         - build
         - coverage/coveralls
-        - LGTM analysis: JavaScriptRequired
+        - "LGTM analysis: JavaScriptRequired"
     required_linear_history: true
     enforce_admins: false
     required_pull_request_reviews: null
