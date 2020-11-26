@@ -11,10 +11,8 @@ const newOctokit = installationId =>
   new MyOctokit({
     authStrategy: require('@octokit/auth-app').createAppAuth,
     auth: {
-      appId: 89571,
-      privateKey: fs.readFileSync(
-        'the-repository-manager.2020-11-20.private-key.pem'
-      ),
+      appId: process.env.APP_ID,
+      privateKey: process.env.CERT,
       installationId
     }
   })
