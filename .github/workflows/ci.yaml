@@ -43,7 +43,7 @@ jobs:
           github-token: ${{ secrets.github_token }}
 
       - name: Deploy
-        if: ${{ github.ref == 'ref/head/master' }}
+        if: github.ref == 'refs/heads/master'
         run: ./node_modules/.bin/serverless deploy
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
