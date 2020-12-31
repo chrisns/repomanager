@@ -30,7 +30,7 @@
   },
   "homepage": "https://github.com/chrisns/repomanager#readme",
   "devDependencies": {
-    "c8": "^7.3.5",
+    "c8": "^7.4.0",
     "chai": "^4.2.0",
     "chai-as-promised": "^7.1.1",
     "eslint": "^7.16.0",
