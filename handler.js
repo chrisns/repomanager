@@ -7,7 +7,7 @@ const { paginateRest } = require('@octokit/plugin-paginate-rest')
 
 const MyOctokit = Octokit.plugin(createPullRequest).plugin(paginateRest)
 
-const newOctokit = installationId =>
+const newOctokit = (installationId) =>
   new MyOctokit({
     authStrategy: require('@octokit/auth-app').createAppAuth,
     auth: {
@@ -22,21 +22,21 @@ const cron = async () => {
   const installations = await octokit.paginate(octokit.apps.listInstallations)
 
   const repos = await Promise.all(
-    installations.map(async inst => {
+    installations.map(async (inst) => {
       const octokit = newOctokit(inst.id)
       return octokit
         .paginate(octokit.apps.listReposAccessibleToInstallation, inst.id)
-        .then(repos =>
+        .then((repos) =>
           repos.filter(
-            repo =>
+            (repo) =>
               repo.fork === false &&
               repo.disabled === false &&
               repo.archived === false
           )
         )
-        .then(async repos =>
+        .then(async (repos) =>
           Promise.all(
-            repos.map(async repo => {
+            repos.map(async (repo) => {
               return {
                 ...repo,
                 installationId: inst.id,
@@ -56,7 +56,7 @@ const cron = async () => {
   await Promise.all(repos.flat().map(applyConfig))
 }
 
-const applyConfig = async repo => {
+const applyConfig = async (repo) => {
   const octokit = repo.octokit
   if (repo.desiredConfig.vulnerabilityAlerts === true) {
     await octokit.repos.enableVulnerabilityAlerts({
@@ -88,7 +88,7 @@ const applyConfig = async repo => {
     repo.default_branch
   ) {
     const branchProtectionConfig = await Promise.all(
-      repo.desiredConfig.branchProtection.map(async a => {
+      repo.desiredConfig.branchProtection.map(async (a) => {
         return {
           owner: repo.owner.login,
           repo: repo.name,
@@ -111,9 +111,9 @@ const applyConfig = async repo => {
                                 : a.branch
                             }`
                           })
-                        ).data.check_runs.map(check => check.name)
+                        ).data.check_runs.map((check) => check.name)
                       )
-                    ).filter(name => name !== '.github/dependabot.yml')
+                    ).filter((name) => name !== '.github/dependabot.yml')
                   } catch (error) {
                     a.required_status_checks.contexts = []
                   }
@@ -200,7 +200,7 @@ const applyConfig = async repo => {
 
       dependabotConfig.updates.push({ 'package-ecosystem': 'github-actions' })
 
-      dependabotConfig.updates = dependabotConfig.updates.map(a => {
+      dependabotConfig.updates = dependabotConfig.updates.map((a) => {
         return { ...a, directory: '/', schedule: { interval: 'daily' } }
       })
     } else {
