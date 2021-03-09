@@ -4,5 +4,5 @@ module.exports = {
     mocha: true,
     node: true
   },
-  extends: ['standard']
+  extends: ['prettier-standard']
 }
