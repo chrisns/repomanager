@@ -56,6 +56,6 @@
     "@octokit/rest": "^18.3.5",
     "octokit-plugin-create-pull-request": "^3.9.3",
     "run-func": "^1.0.5",
-    "yaml": "^1.10.0"
+    "yaml": "^1.10.2"
   }
 }
