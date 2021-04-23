@@ -51,7 +51,7 @@
     "sinon-chai": "^3.6.0"
   },
   "dependencies": {
-    "@octokit/auth-app": "^3.3.0",
+    "@octokit/auth-app": "^3.4.0",
     "@octokit/plugin-paginate-rest": "^2.13.3",
     "@octokit/rest": "^18.5.3",
     "octokit-plugin-create-pull-request": "^3.9.3",
