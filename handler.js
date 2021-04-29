@@ -7,18 +7,21 @@ const { paginateRest } = require('@octokit/plugin-paginate-rest')
 
 const MyOctokit = Octokit.plugin(createPullRequest).plugin(paginateRest)
 
-const newOctokit = (installationId) =>
-  new MyOctokit({
+const newOctokit = (installationId) => {
+  const auth = {
+    appId: process.env.APP_ID,
+    privateKey: process.env.CERT,
+  }
+  if (installationId)
+    auth.installationId = installationId
+  return new MyOctokit({
     authStrategy: require('@octokit/auth-app').createAppAuth,
-    auth: {
-      appId: process.env.APP_ID,
-      privateKey: process.env.CERT,
-      installationId
-    }
+    auth
   })
+}
 
 const cron = async () => {
-  const octokit = newOctokit()
+  const octokit = newOctokit(0)
   const installations = await octokit.paginate(octokit.apps.listInstallations)
 
   const repos = await Promise.all(
@@ -106,8 +109,8 @@ const applyConfig = async (repo) => {
                           owner: repo.owner.login,
                           repo: repo.name,
                           ref: `refs/heads/${a.branch === '__DEFALT_BRANCH__'
-                              ? repo.default_branch
-                              : a.branch
+                            ? repo.default_branch
+                            : a.branch
                             }`
                         })
                       ).data.check_runs.map((check) => check.name)
