@@ -9,6 +9,6 @@ module.exports = {
     '!node_modules/**',
     '!coverage/**',
     '!jest.config.js',
-    '!wallaby.js',
-  ],
+    '!wallaby.js'
+  ]
 }

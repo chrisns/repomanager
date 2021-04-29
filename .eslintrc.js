@@ -1,7 +1,7 @@
 module.exports = {
   root: true,
   env: {
-    mocha: true,
+    jest: true,
     node: true
   },
   extends: ['prettier-standard']
