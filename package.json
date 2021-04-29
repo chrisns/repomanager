@@ -11,11 +11,7 @@
     "lint-fix:eslint": "eslint --fix  .",
     "lint:markdownlint": "markdownlint '*.md'",
     "lint-fix:markdownlint": "markdownlint --fix '*.md'",
-    "test": "mocha",
-    "coverage": "c8 --clean mocha",
-    "record-coverage": "c8 report --reporter=text-lcov --all --exclude=test/* --exclude=.git --exclude=.eslintrc.js --exclude=.postcssrc.js --exclude=wallaby.js > ./coverage/lcov.info",
-    "test-watch-cover": "nodemon --exec c8 npm test",
-    "test-watch": "nodemon --exec npm test"
+    "test": "jest"
   },
   "repository": {
     "type": "git",
@@ -28,9 +24,6 @@
   },
   "homepage": "https://github.com/chrisns/repomanager#readme",
   "devDependencies": {
-    "c8": "^7.7.1",
-    "chai": "^4.3.4",
-    "chai-as-promised": "^7.1.1",
     "eslint": "^7.24.0",
     "eslint-config-prettier": "^8.3.0",
     "eslint-config-prettier-standard": "^4.0.1",
@@ -39,16 +32,13 @@
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-prettier": "^3.4.0",
     "eslint-plugin-promise": "^4.3.1",
+    "jest": "^26.6.3",
     "markdownlint": "^0.23.1",
     "markdownlint-cli": "^0.27.1",
-    "mocha": "^8.3.2",
     "npm-run-all": "^4.1.5",
     "prettier": "^2.2.1",
     "prettier-config-standard": "^4.0.0",
-    "rewire": "^5.0.0",
-    "serverless": "^2.38.0",
-    "sinon": "^10.0.1",
-    "sinon-chai": "^3.6.0"
+    "serverless": "^2.38.0"
   },
   "dependencies": {
     "@octokit/auth-app": "^3.4.0",

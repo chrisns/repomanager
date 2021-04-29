@@ -32,11 +32,6 @@ jobs:
       - name: Test
         run: npm run test
 
-      - name: Generate coverage report
-        run: |
-          npm run coverage
-          npm run record-coverage
-
       - name: Coveralls
         uses: coverallsapp/github-action@master
         with:
