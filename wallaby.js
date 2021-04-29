@@ -4,7 +4,7 @@ module.exports = function () {
 
     tests: ['test/**/*.js'],
 
-    testFramework: 'mocha',
+    testFramework: 'jest',
 
     env: {
       type: 'node'
