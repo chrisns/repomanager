@@ -193,6 +193,16 @@ const applyConfig = async (repo) => {
         await octokit.repos.getContent({
           owner: repo.owner.login,
           repo: repo.name,
+          path: 'go.mod'
+        })
+        dependabotConfig.updates.push({ 'package-ecosystem': 'gomod' })
+      } catch (error) {
+        console.log(`${repo.full_name}: Dependabot no go.mod`)
+      }
+      try {
+        await octokit.repos.getContent({
+          owner: repo.owner.login,
+          repo: repo.name,
           path: 'Dockerfile'
         })
         dependabotConfig.updates.push({ 'package-ecosystem': 'docker' })
