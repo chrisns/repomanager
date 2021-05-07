@@ -179,38 +179,21 @@ const applyConfig = async (repo) => {
       updates: []
     }
     if (repo.desiredConfig.dependabot === 'auto') {
-      try {
-        await octokit.repos.getContent({
-          owner: repo.owner.login,
-          repo: repo.name,
-          path: 'package.json'
-        })
-        dependabotConfig.updates.push({ 'package-ecosystem': 'npm' })
-      } catch (error) {
-        console.log(`${repo.full_name}: Dependabot no package.json`)
-      }
-      try {
-        await octokit.repos.getContent({
-          owner: repo.owner.login,
-          repo: repo.name,
-          path: 'go.mod'
-        })
-        dependabotConfig.updates.push({ 'package-ecosystem': 'gomod' })
-      } catch (error) {
-        console.log(`${repo.full_name}: Dependabot no go.mod`)
-      }
-      try {
-        await octokit.repos.getContent({
-          owner: repo.owner.login,
-          repo: repo.name,
-          path: 'Dockerfile'
-        })
-        dependabotConfig.updates.push({ 'package-ecosystem': 'docker' })
-      } catch (error) {
-        console.log(`${repo.full_name}: Dependabot no Dockerfile`)
-      }
-
+      dependabotConfig.updates.push({ 'package-ecosystem': 'bundler' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'cargo' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'composer' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'docker' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'elm' })
       dependabotConfig.updates.push({ 'package-ecosystem': 'github-actions' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'gitsubmodule' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'gomod' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'gradle' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'maven' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'mix' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'npm' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'nuget' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'pip' })
+      dependabotConfig.updates.push({ 'package-ecosystem': 'terraform' })
 
       dependabotConfig.updates = dependabotConfig.updates.map((a) => {
         return { ...a, directory: '/', schedule: { interval: 'daily' } }
