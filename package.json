@@ -43,7 +43,7 @@
   "dependencies": {
     "@octokit/auth-app": "^3.4.1",
     "@octokit/plugin-paginate-rest": "^2.13.3",
-    "@octokit/rest": "^18.5.5",
+    "@octokit/rest": "^18.5.6",
     "octokit-plugin-create-pull-request": "^3.9.3",
     "run-func": "^1.0.5",
     "yaml": "^1.10.2"
