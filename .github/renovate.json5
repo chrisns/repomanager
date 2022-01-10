@@ -1,11 +1,5 @@
 {
   "extends": [
     "config:base"
-  ],
-  "automerge": true,
-  "platformAutomerge": true,
-  "lockFileMaintenance": { "enabled": true },
-  "pinDigests": true,
-  "rollbackPrs": true,
-  "assignees": ["chrisns"]
+  ]
 }
