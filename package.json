@@ -31,7 +31,7 @@
     "eslint-plugin-import": "2.25.4",
     "eslint-plugin-node": "11.1.0",
     "eslint-plugin-prettier": "4.0.0",
-    "eslint-plugin-promise": "5.2.0",
+    "eslint-plugin-promise": "6.0.0",
     "jest": "27.4.7",
     "markdownlint": "0.25.0",
     "markdownlint-cli": "0.30.0",
