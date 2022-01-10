@@ -1,6 +1,7 @@
 {
   "extends": [
-    "config:base"
+    "config:base",
+    "workarounds:typesNodeVersioning"
   ],
   "automerge": true,
   "platformAutomerge": true,
@@ -8,4 +9,4 @@
   "pinDigests": true,
   "rollbackPrs": true,
   "assignees": ["chrisns"]
-}
+ }
