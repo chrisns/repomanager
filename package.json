@@ -24,7 +24,7 @@
   },
   "homepage": "https://github.com/chrisns/repomanager#readme",
   "devDependencies": {
-    "eslint": "8.9.0",
+    "eslint": "8.10.0",
     "eslint-config-prettier": "8.4.0",
     "eslint-config-prettier-standard": "4.0.1",
     "eslint-config-standard": "16.0.3",
