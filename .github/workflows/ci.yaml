@@ -37,6 +37,9 @@ jobs:
         with:
           github-token: ${{ secrets.github_token }}
 
+      - name: Package
+        run: ./node_modules/.bin/serverless package
+
       - name: Deploy
         if: github.ref == 'refs/heads/master'
         run: ./node_modules/.bin/serverless deploy
