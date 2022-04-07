@@ -115,7 +115,7 @@ const applyConfig = async (repo) => {
                           })
                         ).data.check_runs.map((check) => check.name)
                       )
-                    ).filter((name) => name !== '.github/dependabot.yml')
+                    )
                   } catch (error) {
                     a.required_status_checks.contexts = []
                   }
@@ -130,41 +130,6 @@ const applyConfig = async (repo) => {
       branchProtectionConfig.map(octokit.repos.updateBranchProtection)
     )
   }
-  if (repo.desiredConfig.license) {
-    let currentLicense = false
-    try {
-      currentLicense = (
-        await octokit.licenses.getForRepo({
-          owner: repo.owner.login,
-          repo: repo.name
-        })
-      ).data
-    } catch (error) {
-      console.log(`${repo.full_name}: Could not get current licence`)
-    }
-    try {
-      await octokit.createPullRequest({
-        owner: repo.owner.login,
-        repo: repo.name,
-        title: `${currentLicense ? 'Update' : 'Create'} License`,
-        body: '',
-        createWhenEmpty: false,
-        head: 'repomanager_license',
-        changes: [
-          {
-            files: {
-              [currentLicense ? currentLicense.path : 'LICENSE']: repo
-                .desiredConfig.license
-            },
-            emptyCommit: false,
-            commit: 'LICENSE'
-          }
-        ]
-      })
-    } catch (error) {
-      console.log(`${repo.full_name}: could not create license PR`)
-    }
-  }
   if (repo.desiredConfig.repo) {
     await octokit.repos.update({
       owner: repo.owner.login,
@@ -173,56 +138,6 @@ const applyConfig = async (repo) => {
     })
   }
 
-  if (repo.desiredConfig.dependabot !== false) {
-    let dependabotConfig = {
-      version: 2,
-      updates: []
-    }
-    if (repo.desiredConfig.dependabot === 'auto') {
-      dependabotConfig.updates.push({ 'package-ecosystem': 'bundler' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'cargo' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'composer' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'docker' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'elm' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'github-actions' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'gitsubmodule' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'gomod' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'gradle' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'maven' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'mix' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'npm' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'nuget' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'pip' })
-      dependabotConfig.updates.push({ 'package-ecosystem': 'terraform' })
-
-      dependabotConfig.updates = dependabotConfig.updates.map((a) => {
-        return { ...a, directory: '/', schedule: { interval: 'daily' } }
-      })
-    } else {
-      dependabotConfig = repo.desiredConfig.dependabot
-    }
-    try {
-      await octokit.createPullRequest({
-        owner: repo.owner.login,
-        repo: repo.name,
-        title: 'Update dependabot config',
-        body: '',
-        createWhenEmpty: false,
-        head: 'repomanager_dependabot',
-        changes: [
-          {
-            files: {
-              '.github/dependabot.yml': YAML.stringify(dependabotConfig)
-            },
-            emptyCommit: false,
-            commit: 'Dependabot config'
-          }
-        ]
-      })
-    } catch (error) {
-      console.log(`${repo.full_name}: could not create dependabot PR`)
-    }
-  }
   if (repo.desiredConfig.files !== false) {
     try {
       await octokit.createPullRequest({
@@ -273,7 +188,7 @@ const getRepoConfig = async (repo, owner, octokit) => {
         (
           await octokit.repos.getContent({
             owner,
-            repo: 'repo-config',
+            repo: '.github',
             path: 'repo-config.yml'
           })
         ).data.content,

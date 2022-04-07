@@ -19,7 +19,7 @@ GitHub App powered by AWS Lambda to manage your repositories for you.
 Configuration is formed through merging three potential configuration sources if they exist, `automatedSecurityFixes` and `vulnerabilityAlerts` are always both enabled by default
 
 1. This repository [base-repo-config.yml](base-repo-config.yml)
-2. A specifically named repository in the user/org called `repo-config` with a file named `repo-config.yml`. [example](https://github.com/chrisns/repo-config)
+2. A specifically named repository in the user/org called `.github` with a file named `repo-config.yml`. [example](https://github.com/chrisns/.github)
 3. A `.github/repo-config.yml` in the repository
 
 ## Configuration example
@@ -50,10 +50,6 @@ repo:
   allow_merge_commit: false
   allow_rebase_merge: true
   delete_branch_on_merge: true
-license: |
-  MIT License
-  ..
-dependabot: auto # you can either specify the whole dependabot file in here, define it as false and it won't be managed, or auto and it'll try and guess what config you want based on some files in the repo. mileage with auto will vary.
 files:
   # You can also specify arbitrary files
   '.github/FUNDING.yml': |
