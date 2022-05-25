@@ -40,12 +40,16 @@ jobs:
       - name: Package
         run: ./node_modules/.bin/serverless package
 
+      - uses: aws-actions/configure-aws-credentials@05b148adc31e091bafbaf404f745055d4d3bc9d2 # tag=v1
+        with:
+          role-to-assume: arn:aws:iam::557195821817:role/repomanager-update
+          role-session-name: repomanagerupdate
+          aws-region: eu-west-2
+
       - name: Deploy
         if: github.ref == 'refs/heads/master'
         run: ./node_modules/.bin/serverless deploy
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           APP_ID: ${{ secrets.APP_ID }}
           CERT: ${{ secrets.CERT }}
