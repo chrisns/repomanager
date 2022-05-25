@@ -23,7 +23,7 @@ const cron = async () => {
   const octokit = newOctokit(0)
   const installations = await octokit.paginate(octokit.apps.listInstallations)
 
-  const repos = await Promise.all(
+  const repos = await Promise.allSettled(
     installations.map(async (inst) => {
       const octokit = newOctokit(inst.id)
       return octokit
@@ -37,7 +37,7 @@ const cron = async () => {
           )
         )
         .then(async (repos) =>
-          Promise.all(
+          Promise.allSettled(
             repos.map(async (repo) => {
               return {
                 ...repo,
@@ -55,7 +55,7 @@ const cron = async () => {
     })
   )
 
-  await Promise.all(repos.flat().map(applyConfig))
+  await Promise.allSettled(repos.flat().map(applyConfig))
 }
 
 const applyConfig = async (repo) => {
@@ -89,7 +89,7 @@ const applyConfig = async (repo) => {
     repo.private === false &&
     repo.default_branch
   ) {
-    const branchProtectionConfig = await Promise.all(
+    const branchProtectionConfig = await Promise.allSettled(
       repo.desiredConfig.branchProtection.map(async (a) => {
         return {
           owner: repo.owner.login,
@@ -126,7 +126,7 @@ const applyConfig = async (repo) => {
       })
     )
     console.log(branchProtectionConfig[0])
-    await Promise.all(
+    await Promise.allSettled(
       branchProtectionConfig.map(octokit.repos.updateBranchProtection)
     )
   }
@@ -156,7 +156,10 @@ const applyConfig = async (repo) => {
         ]
       })
     } catch (error) {
-      console.log(`${repo.full_name}: could not template file PR`)
+      console.error(
+        `${repo.full_name}: could not template file PR`,
+        error.message
+      )
     }
   }
 }
@@ -179,7 +182,7 @@ const getRepoConfig = async (repo, owner, octokit) => {
       ).toString()
     )
   } catch (error) {
-    console.log(`${owner}/${repo}: could not get .github/repo-config.yml`)
+    console.info(`${owner}/${repo}: could not get .github/repo-config.yml`)
   }
 
   try {
@@ -196,7 +199,7 @@ const getRepoConfig = async (repo, owner, octokit) => {
       ).toString()
     )
   } catch (error) {
-    console.log(`${owner}/repo-config: could not get .github/repo-config.yml`)
+    console.warn(`${owner}/.github: could not get .github/repo-config.yml`)
   }
 
   const baseConfig = YAML.parse(
