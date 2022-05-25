@@ -42,7 +42,7 @@ const cron = async () => {
               return {
                 ...repo,
                 installationId: inst.id,
-                octokit: octokit,
+                octokit,
                 desiredConfig: await getRepoConfig(
                   repo.name,
                   repo.owner.login,
