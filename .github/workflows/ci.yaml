@@ -7,8 +7,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
     steps:
       - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # tag=v3.0.2
 
@@ -38,18 +36,39 @@ jobs:
         with:
           github-token: ${{ secrets.github_token }}
 
+
+      - name: Tar files
+        run: tar -cf dist.tar ./
+
+      - uses: actions/upload-artifact@3cea5372237819ed00197afe530f5a7ea3e805c8 # tag=v3.1.0
+        with:
+          name: dist.tar
+          path: dist.tar
+
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    needs:
+      - build
+    if: ${{ github.ref == 'refs/heads/master' }}
+
+    steps:
+      - uses: actions/download-artifact@fb598a63ae348fa914e94cd0ff38f362e927b741 # tag=v3.0.0
+        with:
+          name: dist.tar
+      - run: tar -xf dist.tar
+
       - name: Package
         run: ./node_modules/.bin/serverless package
 
       - uses: aws-actions/configure-aws-credentials@05b148adc31e091bafbaf404f745055d4d3bc9d2 # tag=v1
-        if: github.ref == 'refs/heads/master'
         with:
           role-to-assume: arn:aws:iam::557195821817:role/repomanager-update
           role-session-name: repomanagerupdate
           aws-region: eu-west-2
 
       - name: Deploy
-        if: github.ref == 'refs/heads/master'
         run: ./node_modules/.bin/serverless deploy
         env:
           GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
