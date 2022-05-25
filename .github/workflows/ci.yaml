@@ -12,7 +12,7 @@ jobs:
 
       - uses: actions/setup-node@17f8bd926464a1afa4c6a11669539e9c1ba77048 # tag=v3.2.0
         with:
-          node-version: 14.x
+          node-version-file: ".nvmrc"
 
       - name: Cache node modules
         id: cache-node-modules
