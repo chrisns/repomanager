@@ -61,6 +61,10 @@ jobs:
 
       - name: Package
         run: ./node_modules/.bin/serverless package
+        env:
+          GITHUB_WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          APP_ID: ${{ secrets.APP_ID }}
+          CERT: ${{ secrets.CERT }}
 
       - uses: aws-actions/configure-aws-credentials@05b148adc31e091bafbaf404f745055d4d3bc9d2 # tag=v1
         with:
