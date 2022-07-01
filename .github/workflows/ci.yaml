@@ -45,6 +45,13 @@ jobs:
           name: dist.tar
           path: dist.tar
 
+      - name: Package
+        run: ./node_modules/.bin/serverless package
+        env:
+          GITHUB_WEBHOOK_SECRET: foobar
+          APP_ID: foo
+          CERT: blah
+
   publish:
     runs-on: ubuntu-latest
     permissions:
