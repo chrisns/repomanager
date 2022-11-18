@@ -1,22 +1,15 @@
 service: repomanager
-frameworkVersion: '2'
+frameworkVersion: '3'
 
 useDotenv: true
 configValidationMode: error
 
 provider:
   name: aws
-  runtime: nodejs14.x
+  runtime: nodejs16.x
   region: eu-west-2
   stage: production
   logRetentionInDays: 3
-  usagePlan:
-    quota:
-      limit: 5000
-      period: MONTH
-    throttle:
-      burstLimit: 50
-      rateLimit: 10
 
   environment:
     APP_ID: ${env:APP_ID}
