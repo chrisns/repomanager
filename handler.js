@@ -54,12 +54,20 @@ const cron = async () => {
         )
     })
   )
-
-  await Promise.allSettled(repos.flat().map(applyConfig))
+  const newrepos = []
+  repos.forEach((install) => {
+    if (install.status === 'fulfilled')
+      install.value.forEach((repo) => {
+        if (install.status === 'fulfilled') newrepos.push(repo.value)
+      })
+  })
+  await Promise.allSettled(newrepos.map(applyConfig))
 }
 
 const applyConfig = async (repo) => {
   const octokit = repo.octokit
+  console.info(`applying config to ${repo.owner.login}/${repo.name}`)
+
   if (repo.desiredConfig.vulnerabilityAlerts === true) {
     await octokit.repos.enableVulnerabilityAlerts({
       owner: repo.owner.login,

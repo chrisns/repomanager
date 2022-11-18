@@ -1,5 +1,5 @@
 service: repomanager
-frameworkVersion: '3'
+frameworkVersion: "3"
 
 useDotenv: true
 configValidationMode: error
@@ -39,8 +39,8 @@ package:
     - .*/**
     - coverage/**
     - Dockerfile
-    - '*.md'
-    - '*.pem'
+    - "*.md"
+    - "*.pem"
     - LICENSE
     - package*
     - wallaby.js
