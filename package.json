@@ -45,7 +45,7 @@
     "@octokit/auth-app": "^4.0.0",
     "@octokit/plugin-paginate-rest": "^7.0.0",
     "@octokit/rest": "^19.0.0",
-    "octokit-plugin-create-pull-request": "^4.0.0",
+    "octokit-plugin-create-pull-request": "^5.0.0",
     "run-func": "^3.0.0",
     "yaml": "^2.2.2"
   }
