@@ -42,7 +42,7 @@
     "serverless": "^3.24.1"
   },
   "dependencies": {
-    "@octokit/auth-app": "^4.0.0",
+    "@octokit/auth-app": "^5.0.0",
     "@octokit/plugin-paginate-rest": "^7.0.0",
     "@octokit/rest": "^19.0.0",
     "octokit-plugin-create-pull-request": "^5.0.0",
