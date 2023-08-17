@@ -6,7 +6,7 @@ configValidationMode: error
 
 provider:
   name: aws
-  runtime: nodejs16.x
+  runtime: nodejs18.x
   region: eu-west-2
   stage: production
   logRetentionInDays: 3
