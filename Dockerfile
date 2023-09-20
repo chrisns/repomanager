@@ -1,4 +1,4 @@
-FROM node:20.7.0-alpine@sha256:eb37f58646a901dc7727cf448cae36daaefaba79de33b5058dab79aa4c04aefb
+FROM node:20.7.0-alpine@sha256:ebb6b2bb56c442e8065558d87b35a04aa7a759cc456dbe6efb60d4541d06fec8
 WORKDIR /app
 COPY . .
 
