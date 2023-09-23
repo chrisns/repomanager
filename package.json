@@ -47,7 +47,7 @@
   },
   "dependencies": {
     "@octokit/auth-app": "^6.0.0",
-    "@octokit/plugin-paginate-rest": "^8.0.0",
+    "@octokit/plugin-paginate-rest": "^9.0.0",
     "@octokit/rest": "^20.0.0",
     "octokit-plugin-create-pull-request": "^5.0.0",
     "run-func": "^3.0.0",
