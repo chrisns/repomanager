@@ -36,7 +36,7 @@
     "markdownlint": "0.33.0",
     "markdownlint-cli": "0.39.0",
     "npm-run-all2": "6.1.2",
-    "prettier": "3.2.4",
+    "prettier": "3.2.5",
     "serverless": "^3.24.1"
   },
   "prettier": {
