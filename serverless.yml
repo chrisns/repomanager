@@ -44,3 +44,13 @@ package:
     - LICENSE
     - package*
     - wallaby.js
+    - jest.config.js
+    - eslint.config.mjs
+    - ./__tests__/**
+    - ./**/*.d.ts
+    - ./**/*.js.map
+    - ./node_modules/**/dist-web/**
+    - ./node_modules/**/dist-src/**
+    - ./node_modules/**/README.md
+    - ./node_modules/**/LICENSE
+    - ./node_modules/**/browser/**
