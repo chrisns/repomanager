@@ -41,7 +41,8 @@ branchProtection:
     required_pull_request_reviews: null
     restrictions: null
 repo:
-  # see octokit docs for all paramshttps://octokit.github.io/rest.js/v18#repos-update
+  # see octokit docs for all params:
+  # https://octokit.github.io/rest.js/v18#repos-update
   has_issues: true
   has_projects: false
   has_wiki: false
