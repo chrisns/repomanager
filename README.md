@@ -28,8 +28,8 @@ Configuration is formed through merging three potential configuration sources if
 vulnerabilityAlerts: true
 automatedSecurityFixes: true
 branchProtection:
-  - branch: '__DEFALT_BRANCH__'
-    # __DEFALT_BRANCH__ is dynamically swapped out for the repository's default branch
+  - branch: '__DEFAULT_BRANCH__'
+    # __DEFAULT_BRANCH__ is dynamically swapped out for the repository's default branch
     required_status_checks:
       strict: true
       # contexts: ALL
