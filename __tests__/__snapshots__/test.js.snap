@@ -1,5 +1,12 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`#getRepoConfig() should merge the base config with the owner config when the repo lacks config 1`] = `
+{
+  "another": "bar",
+  "bar": "foo",
+}
+`;
+
 exports[`#getRepoConfig() should override the base config with the owner then the repo 1`] = `
 {
   "another": "bar",

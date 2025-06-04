@@ -27,4 +27,21 @@ describe('#getRepoConfig()', () => {
       mod.getRepoConfig('foo', 'bar', octomock)
     ).resolves.toMatchSnapshot()
   })
+
+  it('should merge the base config with the owner config when the repo lacks config', () => {
+    const configFromOwner = 'another: bar'
+    const octomock = {
+      repos: {
+        getContent: jest
+          .fn()
+          .mockRejectedValueOnce(new Error('no repo config'))
+          .mockResolvedValueOnce({
+            data: { content: Buffer.from(configFromOwner).toString('base64') }
+          })
+      }
+    }
+    return expect(
+      mod.getRepoConfig('foo', 'bar', octomock)
+    ).resolves.toMatchSnapshot()
+  })
 })
