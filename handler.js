@@ -104,7 +104,7 @@ const applyConfig = async (repo) => {
           repo: repo.name,
           ...a,
           branch:
-            a.branch === '__DEFALT_BRANCH__' ? repo.default_branch : a.branch,
+            a.branch === '__DEFAULT_BRANCH__' ? repo.default_branch : a.branch,
           required_status_checks:
             a.required_status_checks.contexts === 'ALL'
               ? await (async () => {
@@ -116,7 +116,7 @@ const applyConfig = async (repo) => {
                             owner: repo.owner.login,
                             repo: repo.name,
                             ref: `refs/heads/${
-                              a.branch === '__DEFALT_BRANCH__'
+                              a.branch === '__DEFAULT_BRANCH__'
                                 ? repo.default_branch
                                 : a.branch
                             }`
