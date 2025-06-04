@@ -28,3 +28,23 @@ describe('#getRepoConfig()', () => {
     ).resolves.toMatchSnapshot()
   })
 })
+
+describe('#cron()', () => {
+  it('should only process fulfilled repo results', () => {
+    const repos = [
+      { status: 'fulfilled', value: 'ok' },
+      { status: 'rejected', reason: 'fail' }
+    ]
+    const installations = [{ status: 'fulfilled', value: repos }]
+
+    const newrepos = []
+    installations.forEach((install) => {
+      if (install.status === 'fulfilled')
+        install.value.forEach((repo) => {
+          if (repo.status === 'fulfilled') newrepos.push(repo.value)
+        })
+    })
+
+    expect(newrepos).toEqual(['ok'])
+  })
+})
