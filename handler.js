@@ -58,7 +58,7 @@ const cron = async () => {
   repos.forEach((install) => {
     if (install.status === 'fulfilled')
       install.value.forEach((repo) => {
-        if (repo.status === 'fulfilled') newrepos.push(repo.value)
+        if (install.status === 'fulfilled') newrepos.push(repo.value)
       })
   })
   await Promise.allSettled(newrepos.map(applyConfig))
