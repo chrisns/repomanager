@@ -30,7 +30,7 @@
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^10.0.0",
     "globals": "^16.0.0",
-    "jest": "30.0.1",
+    "jest": "30.0.2",
     "markdownlint": "0.38.0",
     "markdownlint-cli": "0.45.0",
     "npm-run-all2": "8.0.4",
