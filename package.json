@@ -35,7 +35,7 @@
     "markdownlint-cli": "0.47.0",
     "npm-run-all2": "8.0.4",
     "prettier": "3.8.1",
-    "serverless": "^3.24.1"
+    "serverless": "^4.31.0"
   },
   "prettier": {
     "singleQuote": true,
