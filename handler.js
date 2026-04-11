@@ -1,225 +1,192 @@
-const YAML = require('yaml')
-const fs = require('fs')
+const { createApp } = require('./src/octokit')
+const { getRepoConfig } = require('./src/config')
+const { planRepo, splitByRisk } = require('./src/planner')
+const { applyChanges } = require('./src/applier')
+const {
+  upsertConsentIssue,
+  parseCheckedItems,
+  markItemsApplied,
+  openInvalidConfigIssue,
+  closeInvalidConfigIssue,
+  CONSENT_LABEL,
+  ISSUE_TITLE,
+} = require('./src/consent')
 
-const { Octokit } = require('@octokit/rest')
-const { createPullRequest } = require('octokit-plugin-create-pull-request')
-const { paginateRest } = require('@octokit/plugin-paginate-rest')
+const isDryRun = () => process.env.DRY_RUN === 'true'
 
-const MyOctokit = Octokit.plugin(createPullRequest).plugin(paginateRest)
+const shouldProcessRepo = (repo) => !repo.fork && !repo.disabled && !repo.archived
 
-const newOctokit = (installationId) => {
-  const auth = {
-    appId: process.env.APP_ID,
-    privateKey: process.env.CERT
+const processRepo = async (octokit, repo) => {
+  if (!shouldProcessRepo(repo)) return { skipped: true, reason: 'filtered' }
+
+  const { config, errors } = await getRepoConfig(repo.name, repo.owner.login, octokit)
+  if (errors) {
+    console.warn(`${repo.owner.login}/${repo.name}: invalid repo-config.yml`)
+    try {
+      await openInvalidConfigIssue(octokit, repo, errors)
+    } catch (error) {
+      console.error(`${repo.owner.login}/${repo.name}: failed to open invalid-config issue: ${error.message}`)
+    }
+    return { skipped: true, reason: 'invalid-config' }
   }
-  if (installationId) auth.installationId = installationId
-  return new MyOctokit({
-    authStrategy: require('@octokit/auth-app').createAppAuth,
-    auth
-  })
+  try {
+    await closeInvalidConfigIssue(octokit, repo)
+  } catch (error) {
+    console.warn(`${repo.owner.login}/${repo.name}: could not close invalid-config issue: ${error.message}`)
+  }
+
+  if (config.branchProtection && config.branchProtection.length) {
+    console.warn(
+      `${repo.owner.login}/${repo.name}: \`branchProtection\` is deprecated — prefer the \`rulesets\` key.`,
+    )
+  }
+
+  const changes = await planRepo(octokit, repo, config)
+  if (!changes.length) {
+    try {
+      await upsertConsentIssue(octokit, repo, [])
+    } catch {
+      // nothing to clean up
+    }
+    return { applied: 0, pendingConsent: 0 }
+  }
+
+  const { autoApply, needsConsent } = splitByRisk(changes)
+  const results = await applyChanges(octokit, repo, autoApply, { dryRun: isDryRun() })
+
+  if (needsConsent.length) {
+    if (isDryRun()) {
+      console.info(`[dry-run] ${repo.owner.login}/${repo.name}: would upsert consent issue with ${needsConsent.length} item(s)`)
+    } else {
+      try {
+        await upsertConsentIssue(octokit, repo, needsConsent)
+      } catch (error) {
+        console.error(
+          `${repo.owner.login}/${repo.name}: failed to upsert consent issue: ${error.message}`,
+        )
+      }
+    }
+  } else {
+    try {
+      await upsertConsentIssue(octokit, repo, [])
+    } catch {
+      // ignore
+    }
+  }
+
+  return { applied: results.length, pendingConsent: needsConsent.length }
 }
 
 const cron = async () => {
-  const octokit = newOctokit(0)
-  const installations = await octokit.paginate(octokit.apps.listInstallations)
-
-  const repos = await Promise.allSettled(
-    installations.map(async (inst) => {
-      const octokit = newOctokit(inst.id)
-      return octokit
-        .paginate(octokit.apps.listReposAccessibleToInstallation, inst.id)
-        .then((repos) =>
-          repos.filter(
-            (repo) =>
-              repo.fork === false &&
-              repo.disabled === false &&
-              repo.archived === false
-          )
-        )
-        .then(async (repos) =>
-          Promise.allSettled(
-            repos.map(async (repo) => {
-              return {
-                ...repo,
-                installationId: inst.id,
-                octokit,
-                desiredConfig: await getRepoConfig(
-                  repo.name,
-                  repo.owner.login,
-                  octokit
-                )
-              }
-            })
-          )
-        )
-    })
-  )
-  const newrepos = []
-  repos.forEach((install) => {
-    if (install.status === 'fulfilled')
-      install.value.forEach((repo) => {
-        if (install.status === 'fulfilled') newrepos.push(repo.value)
-      })
-  })
-  await Promise.allSettled(newrepos.map(applyConfig))
+  const app = await createApp()
+  let processed = 0
+  let failed = 0
+  for await (const { octokit, repository } of app.eachRepository.iterator()) {
+    try {
+      await processRepo(octokit, repository)
+      processed++
+    } catch (error) {
+      failed++
+      console.error(
+        `${repository.owner.login}/${repository.name}: unexpected failure: ${error.message}`,
+      )
+    }
+  }
+  console.info(`repomanager cron complete. processed=${processed} failed=${failed}`)
+  return { processed, failed }
 }
 
-const applyConfig = async (repo) => {
-  const octokit = repo.octokit
-  console.info(`applying config to ${repo.owner.login}/${repo.name}`)
+const applyConsentedChanges = async (octokit, repo, issue) => {
+  const checkedIds = parseCheckedItems(issue.body)
+  if (!checkedIds.size) return { applied: 0 }
 
-  if (repo.desiredConfig.vulnerabilityAlerts === true) {
-    await octokit.repos.enableVulnerabilityAlerts({
-      owner: repo.owner.login,
-      repo: repo.name
-    })
-  } else if (repo.desiredConfig.vulnerabilityAlerts === false) {
-    octokit.repos.disableVulnerabilityAlerts({
-      owner: repo.owner.login,
-      repo: repo.name
-    })
+  const { config, errors } = await getRepoConfig(repo.name, repo.owner.login, octokit)
+  if (errors) {
+    console.warn(`${repo.owner.login}/${repo.name}: cannot apply consent (invalid config)`)
+    return { applied: 0 }
   }
+  const changes = await planRepo(octokit, repo, config)
+  const toApply = changes.filter((c) => checkedIds.has(c.id))
+  if (!toApply.length) return { applied: 0 }
 
-  if (repo.desiredConfig.automatedSecurityFixes === true) {
-    await octokit.repos.enableAutomatedSecurityFixes({
-      owner: repo.owner.login,
-      repo: repo.name
-    })
-  } else if (repo.desiredConfig.automatedSecurityFixes === false) {
-    octokit.repos.disableAutomatedSecurityFixes({
-      owner: repo.owner.login,
-      repo: repo.name
-    })
-  }
-
-  if (
-    repo.desiredConfig.branchProtection &&
-    repo.private === false &&
-    repo.default_branch
-  ) {
-    const branchProtectionConfig = await Promise.allSettled(
-      repo.desiredConfig.branchProtection.map(async (a) => {
-        return {
-          owner: repo.owner.login,
-          repo: repo.name,
-          ...a,
-          branch:
-            a.branch === '__DEFAULT_BRANCH__' ? repo.default_branch : a.branch,
-          required_status_checks:
-            a.required_status_checks.contexts === 'ALL'
-              ? await (async () => {
-                  try {
-                    a.required_status_checks.contexts = Array.from(
-                      new Set(
-                        (
-                          await octokit.checks.listForRef({
-                            owner: repo.owner.login,
-                            repo: repo.name,
-                            ref: `refs/heads/${
-                              a.branch === '__DEFAULT_BRANCH__'
-                                ? repo.default_branch
-                                : a.branch
-                            }`
-                          })
-                        ).data.check_runs.map((check) => check.name)
-                      )
-                    )
-                  } catch (error) {
-                    a.required_status_checks.contexts = []
-                  }
-                  return a.required_status_checks
-                })(a.required_status_checks)
-              : a.required_status_checks
-        }
-      })
-    )
-    console.log(branchProtectionConfig[0])
-    await Promise.allSettled(
-      branchProtectionConfig.map(octokit.repos.updateBranchProtection)
-    )
-  }
-  if (repo.desiredConfig.repo) {
-    await octokit.repos.update({
-      owner: repo.owner.login,
-      repo: repo.name,
-      ...repo.desiredConfig.repo
-    })
-  }
-
-  if (repo.desiredConfig.files !== false) {
+  const results = await applyChanges(octokit, repo, toApply, { dryRun: isDryRun() })
+  const appliedIds = new Set(results.filter((r) => r.status === 'applied').map((r) => r.change.id))
+  if (appliedIds.size) {
     try {
-      await octokit.createPullRequest({
-        owner: repo.owner.login,
-        repo: repo.name,
-        title: 'Update templated files',
-        body: '',
-        createWhenEmpty: false,
-        head: 'repomanager_files',
-        changes: [
-          {
-            files: repo.desiredConfig.files,
-            emptyCommit: false,
-            commit: 'Update templated files'
-          }
-        ]
-      })
+      await markItemsApplied(octokit, repo, issue.number, appliedIds)
     } catch (error) {
       console.error(
-        `${repo.full_name}: could not template file PR`,
-        error.message
+        `${repo.owner.login}/${repo.name}: failed to update consent issue: ${error.message}`,
       )
+    }
+  }
+  return { applied: appliedIds.size }
+}
+
+const handleIssuesEdited = async (octokit, payload) => {
+  const issue = payload.issue
+  if (!issue) return
+  if (issue.title !== ISSUE_TITLE) return
+  const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name))
+  if (!labels.includes(CONSENT_LABEL)) return
+  await applyConsentedChanges(octokit, payload.repository, issue)
+}
+
+const handlePush = async (octokit, payload) => {
+  const touched = (payload.commits || []).flatMap((c) => [
+    ...(c.added || []),
+    ...(c.modified || []),
+    ...(c.removed || []),
+  ])
+  const relevant =
+    payload.repository.name === '.github'
+      ? touched.includes('repo-config.yml')
+      : touched.includes('.github/repo-config.yml')
+  if (!relevant) return
+  await processRepo(octokit, payload.repository)
+}
+
+const handleInstallation = async (octokit, payload) => {
+  for (const repo of payload.repositories || payload.repositories_added || []) {
+    try {
+      const fullRepo = { ...repo, owner: payload.installation.account }
+      await processRepo(octokit, fullRepo)
+    } catch (error) {
+      console.error(`installation handler: ${error.message}`)
     }
   }
 }
 
-const getRepoConfig = async (repo, owner, octokit) => {
-  let configFromRepo = {}
-  let configFromOwner = {}
-
-  try {
-    configFromRepo = YAML.parse(
-      Buffer.from(
-        (
-          await octokit.repos.getContent({
-            owner,
-            repo,
-            path: '.github/repo-config.yml'
-          })
-        ).data.content,
-        'base64'
-      ).toString()
-    )
-  } catch (error) {
-    console.info(`${owner}/${repo}: could not get .github/repo-config.yml`)
-  }
-
-  try {
-    configFromOwner = YAML.parse(
-      Buffer.from(
-        (
-          await octokit.repos.getContent({
-            owner,
-            repo: '.github',
-            path: 'repo-config.yml'
-          })
-        ).data.content,
-        'base64'
-      ).toString()
-    )
-  } catch (error) {
-    console.warn(`${owner}/.github: could not get .github/repo-config.yml`)
-  }
-
-  const baseConfig = YAML.parse(
-    fs.readFileSync('./base-repo-config.yml').toString()
+const webhook = async (event) => {
+  const app = await createApp()
+  app.webhooks.on('issues.edited', ({ octokit, payload }) => handleIssuesEdited(octokit, payload))
+  app.webhooks.on('push', ({ octokit, payload }) => handlePush(octokit, payload))
+  app.webhooks.on('installation.created', ({ octokit, payload }) => handleInstallation(octokit, payload))
+  app.webhooks.on('installation_repositories.added', ({ octokit, payload }) =>
+    handleInstallation(octokit, payload),
   )
-  return { ...baseConfig, ...configFromOwner, ...configFromRepo }
+
+  const headers = event.headers || {}
+  const signature = headers['x-hub-signature-256'] || headers['X-Hub-Signature-256']
+  const id = headers['x-github-delivery'] || headers['X-GitHub-Delivery']
+  const name = headers['x-github-event'] || headers['X-GitHub-Event']
+  const body = event.body || ''
+
+  try {
+    await app.webhooks.verifyAndReceive({ id, name, signature, payload: body })
+    return { statusCode: 202, body: 'ok' }
+  } catch (error) {
+    console.error(`webhook verify/receive failed: ${error.message}`)
+    return { statusCode: 400, body: `bad webhook: ${error.message}` }
+  }
 }
 
 module.exports = {
   cron,
-  getRepoConfig,
-  applyConfig,
-  newOctokit,
-  MyOctokit
+  webhook,
+  processRepo,
+  applyConsentedChanges,
+  handleIssuesEdited,
+  handlePush,
+  handleInstallation,
 }

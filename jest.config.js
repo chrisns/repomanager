@@ -2,13 +2,14 @@ module.exports = {
   coverageReporters: ['lcovonly', 'text'],
   collectCoverage: true,
   coverageDirectory: 'coverage',
-  collectCoverageFrom: [
-    '**/*.js',
-    '!.**',
-    '!tests/**',
-    '!node_modules/**',
-    '!coverage/**',
-    '!jest.config.js',
-    '!wallaby.js'
-  ]
+  collectCoverageFrom: ['handler.js', 'src/**/*.js', '!src/octokit.js'],
+  testPathIgnorePatterns: ['/node_modules/', '/.aws-sam/', '/__tests__/helpers.js'],
+  coverageThreshold: {
+    global: {
+      statements: 75,
+      branches: 60,
+      functions: 75,
+      lines: 75,
+    },
+  },
 }

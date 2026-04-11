@@ -1,9 +1,9 @@
-FROM node:24.14.1-alpine@sha256:01743339035a5c3c11a373cd7c83aeab6ed1457b55da6a69e014a95ac4e4700b
+FROM node:22.11.0-alpine
 WORKDIR /app
 COPY . .
 
-RUN npm install --production
+RUN npm install --omit=dev
 
 USER node
 
-CMD npm start
+CMD ["npm", "start"]
