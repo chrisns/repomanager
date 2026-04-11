@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: repomanager - GitHub App powered by AWS Lambda
+
+Parameters:
+  AppId:
+    Type: String
+  GitHubWebhookSecret:
+    Type: String
+    NoEcho: true
+  Cert:
+    Type: String
+    NoEcho: true
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    MemorySize: 256
+    Timeout: 360
+    Architectures:
+      - arm64
+    Environment:
+      Variables:
+        APP_ID: !Ref AppId
+        GITHUB_WEBHOOK_SECRET: !Ref GitHubWebhookSecret
+        CERT: !Ref Cert
+        NODE_OPTIONS: --enable-source-maps
+
+Resources:
+  CronFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: repomanager-cron
+      Handler: handler.cron
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(10 minutes)
+      LoggingConfig:
+        LogGroup: !Ref CronLogGroup
+
+  CronLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/repomanager-cron
+      RetentionInDays: 3
+
+  WebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: repomanager-webhook
+      Handler: handler.webhook
+      Timeout: 30
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            Path: /webhook
+            Method: POST
+      LoggingConfig:
+        LogGroup: !Ref WebhookLogGroup
+
+  WebhookLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/repomanager-webhook
+      RetentionInDays: 3
+
+Outputs:
+  WebhookUrl:
+    Description: Webhook URL to configure in the GitHub App
+    Value: !Sub 'https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com/webhook'

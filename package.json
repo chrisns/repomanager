@@ -1,10 +1,10 @@
 {
   "name": "repomanager",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "GitHub App powered by AWS Lambda",
   "main": "handler.js",
   "scripts": {
-    "start": "run-func handler.js cron",
+    "start": "node scripts/run-cron.js",
     "lint": "npm-run-all lint:*",
     "lint-fix": "npm-run-all lint-fix:*",
     "lint:eslint": "eslint .",
@@ -33,9 +33,9 @@
     "jest": "30.0.5",
     "markdownlint": "0.40.0",
     "markdownlint-cli": "0.48.0",
+    "nock": "^14.0.0",
     "npm-run-all2": "8.0.4",
-    "prettier": "3.8.2",
-    "serverless": "^3.24.1"
+    "prettier": "3.8.2"
   },
   "prettier": {
     "singleQuote": true,
@@ -44,11 +44,10 @@
     "semi": false
   },
   "dependencies": {
-    "@octokit/auth-app": "^6.0.0",
-    "@octokit/plugin-paginate-rest": "^9.0.0",
-    "@octokit/rest": "^20.0.0",
-    "octokit-plugin-create-pull-request": "^5.0.0",
-    "run-func": "^3.0.0",
-    "yaml": "^2.2.2"
+    "deepmerge": "^4.3.1",
+    "octokit": "^5.0.5",
+    "octokit-plugin-create-pull-request": "^6.0.1",
+    "yaml": "^2.2.2",
+    "zod": "^4.0.0"
   }
 }
