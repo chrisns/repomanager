@@ -2,5 +2,6 @@ node_modules
 *.pem
 coverage
 .serverless
+.aws-sam
 .env
 /.env.dev
