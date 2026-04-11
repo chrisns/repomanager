@@ -3,7 +3,7 @@ module.exports = {
   collectCoverage: true,
   coverageDirectory: 'coverage',
   collectCoverageFrom: ['handler.js', 'src/**/*.js', '!src/octokit.js'],
-  testPathIgnorePatterns: ['/node_modules/', '/__tests__/helpers.js'],
+  testPathIgnorePatterns: ['/node_modules/', '/.aws-sam/', '/__tests__/helpers.js'],
   coverageThreshold: {
     global: {
       statements: 75,
