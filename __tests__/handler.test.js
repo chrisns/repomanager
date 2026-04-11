@@ -48,7 +48,6 @@ const {
   webhook,
 } = require('../handler')
 const mockedOctokitModule = require('../src/octokit')
-const { encodeId } = require('../src/consent')
 const { createMockOctokit, makeRepo } = require('./helpers')
 
 const base64 = (str) => Buffer.from(str).toString('base64')
@@ -129,7 +128,7 @@ describe('applyConsentedChanges', () => {
 
     const issue = {
       number: 9,
-      body: `- [x] <!-- repomanager:${encodeId('bp:main')} --> Apply branch protection to \`main\``,
+      body: '- [x] <!-- repomanager:bp:main --> Apply branch protection to `main`',
     }
     octokit.rest.issues.get.mockResolvedValue({ data: { number: 9, body: issue.body } })
     const result = await applyConsentedChanges(octokit, makeRepo(), issue)
@@ -214,9 +213,11 @@ describe('webhook entry', () => {
     octokit.rest.repos.getContent
       .mockRejectedValueOnce(Object.assign(new Error('nf'), { status: 404 }))
       .mockResolvedValueOnce({ data: { content: base64(repoYaml) } })
-    const bodyText = `- [x] <!-- repomanager:${encodeId('bp:main')} --> Apply BP`
     octokit.rest.issues.get.mockResolvedValue({
-      data: { number: 9, body: bodyText },
+      data: {
+        number: 9,
+        body: '- [x] <!-- repomanager:bp:main --> Apply BP',
+      },
     })
     mockedOctokitModule.__state.octokit = octokit
 
@@ -231,7 +232,7 @@ describe('webhook entry', () => {
         issue: {
           number: 9,
           title: 'repomanager: changes awaiting approval',
-          body: bodyText,
+          body: '- [x] <!-- repomanager:bp:main --> Apply BP',
           labels: [{ name: 'repomanager:consent' }],
         },
         repository: makeRepo(),

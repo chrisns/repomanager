@@ -5,11 +5,7 @@ const INVALID_TITLE = 'repomanager: invalid repo-config.yml'
 const MARKER_PREFIX = 'repomanager:'
 const HEADER = '<!-- repomanager:plan v1 -->'
 
-// Percent-encode the id so no `--` (and therefore no `-->` / `--!>` comment
-// end sequence) can appear inside the embedded HTML comment. encodeURIComponent
-// leaves `-` alone so we swap it explicitly; decodeURIComponent handles `%2D`.
-const encodeId = (id) => encodeURIComponent(id).replace(/-/g, '%2D')
-const decodeId = (encoded) => decodeURIComponent(encoded)
+const encodeId = (id) => id.replace(/-->/g, '-- >')
 
 const renderChangeLine = (change, checked = false) => {
   const box = checked ? '[x]' : '[ ]'
@@ -51,18 +47,13 @@ const renderPlan = (changes, { appliedIds = new Set() } = {}) => {
   return lines.join('\n')
 }
 
-// Matches the output of encodeURIComponent (with `-` → `%2D`). The set
-// deliberately excludes literal `-` so no hyphen pair can terminate the
-// surrounding HTML comment prematurely.
-const ID_CHARS = "[A-Za-z0-9_.!~*'()%]+"
-
 const parseCheckedItems = (body) => {
   if (!body) return new Set()
   const checked = new Set()
-  const regex = new RegExp(`^- \\[x\\]\\s*<!--\\s*repomanager:(${ID_CHARS})\\s*-->`, 'gim')
+  const regex = /^- \[x\]\s*<!--\s*repomanager:([^\s]+)\s*-->/gim
   let match
   while ((match = regex.exec(body)) !== null) {
-    checked.add(decodeId(match[1]))
+    checked.add(match[1])
   }
   return checked
 }
@@ -70,13 +61,10 @@ const parseCheckedItems = (body) => {
 const parseAllItems = (body) => {
   if (!body) return []
   const items = []
-  const regex = new RegExp(
-    `^- \\[(x| )\\]\\s*<!--\\s*repomanager:(${ID_CHARS})\\s*-->\\s*(.*)$`,
-    'gim',
-  )
+  const regex = /^- \[(x| )\]\s*<!--\s*repomanager:([^\s]+)\s*-->\s*(.*)$/gim
   let match
   while ((match = regex.exec(body)) !== null) {
-    items.push({ id: decodeId(match[2]), checked: match[1] === 'x', summary: match[3] })
+    items.push({ id: match[2], checked: match[1] === 'x', summary: match[3] })
   }
   return items
 }
@@ -231,8 +219,6 @@ module.exports = {
   INVALID_CONFIG_LABEL,
   ISSUE_TITLE,
   INVALID_TITLE,
-  encodeId,
-  decodeId,
   renderPlan,
   parseCheckedItems,
   parseAllItems,
