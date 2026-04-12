@@ -80,6 +80,7 @@ jobs:
 
       - name: SAM deploy
         run: |
+          CERT_B64=$(printf '%s' "$CERT" | base64 -w0)
           sam deploy \
             --stack-name repomanager \
             --region eu-west-2 \
@@ -90,4 +91,6 @@ jobs:
             --parameter-overrides \
               AppId=${{ secrets.APP_ID }} \
               GitHubWebhookSecret=${{ secrets.WEBHOOK_SECRET }} \
-              Cert="${{ secrets.CERT }}"
+              "Cert=$CERT_B64"
+        env:
+          CERT: ${{ secrets.CERT }}
