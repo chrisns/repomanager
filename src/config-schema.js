@@ -85,7 +85,21 @@ const RepoConfig = z
     branchProtection: z.array(BranchProtection).optional(),
     rulesets: z.array(Ruleset).optional(),
     repo: z.record(z.string(), z.unknown()).optional(),
-    files: z.union([z.literal(false), z.record(z.string(), z.string())]).optional(),
+    files: z
+      .union([
+        z.literal(false),
+        z.record(
+          z.string(),
+          z.union([
+            z.string(),
+            z.object({
+              content: z.string(),
+              visibility: z.enum(['public', 'private', 'internal']).optional(),
+            }),
+          ]),
+        ),
+      ])
+      .optional(),
   })
   .strict()
 

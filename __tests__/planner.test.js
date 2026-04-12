@@ -1,4 +1,4 @@
-const { planRepo, splitByRisk } = require('../src/planner')
+const { planRepo, splitByRisk, resolveFileVisibility } = require('../src/planner')
 const { createMockOctokit, makeRepo } = require('./helpers')
 
 describe('planRepo', () => {
@@ -124,6 +124,94 @@ describe('planRepo', () => {
     const repo = makeRepo()
     const changes = await planRepo(octokit, repo, { rulesets: [rs] })
     expect(changes).toEqual([])
+  })
+})
+
+describe('resolveFileVisibility', () => {
+  it('passes through plain string entries regardless of visibility', () => {
+    const result = resolveFileVisibility({ 'README.md': 'hi' }, 'private')
+    expect(result).toEqual({ 'README.md': 'hi' })
+  })
+
+  it('includes object entries with matching visibility', () => {
+    const files = {
+      'LICENSE': { content: 'MIT', visibility: 'public' },
+      '.github/FUNDING.yml': { content: 'github: [u]', visibility: 'public' },
+    }
+    expect(resolveFileVisibility(files, 'public')).toEqual({
+      'LICENSE': 'MIT',
+      '.github/FUNDING.yml': 'github: [u]',
+    })
+  })
+
+  it('excludes object entries with non-matching visibility', () => {
+    const files = {
+      'LICENSE': { content: 'MIT', visibility: 'public' },
+      'SECURITY.md': { content: 'sec' },
+    }
+    expect(resolveFileVisibility(files, 'private')).toEqual({
+      'SECURITY.md': 'sec',
+    })
+  })
+
+  it('includes object entries with no visibility filter', () => {
+    const files = {
+      'CODEOWNERS': { content: '* @team' },
+    }
+    expect(resolveFileVisibility(files, 'private')).toEqual({
+      'CODEOWNERS': '* @team',
+    })
+  })
+
+  it('returns null when all files are filtered out', () => {
+    const files = {
+      'LICENSE': { content: 'MIT', visibility: 'public' },
+    }
+    expect(resolveFileVisibility(files, 'private')).toBeNull()
+  })
+
+  it('returns null for false or empty input', () => {
+    expect(resolveFileVisibility(false, 'public')).toBeNull()
+    expect(resolveFileVisibility(null, 'public')).toBeNull()
+  })
+})
+
+describe('planRepo files visibility', () => {
+  it('includes public-only files for public repos', async () => {
+    const octokit = createMockOctokit()
+    const repo = makeRepo({ private: false })
+    const changes = await planRepo(octokit, repo, {
+      files: {
+        'LICENSE': { content: 'MIT', visibility: 'public' },
+        'SECURITY.md': 'always',
+      },
+    })
+    const filesChange = changes.find((c) => c.kind === 'files')
+    expect(filesChange.files).toEqual({ 'LICENSE': 'MIT', 'SECURITY.md': 'always' })
+  })
+
+  it('excludes public-only files for private repos', async () => {
+    const octokit = createMockOctokit()
+    const repo = makeRepo({ private: true })
+    const changes = await planRepo(octokit, repo, {
+      files: {
+        'LICENSE': { content: 'MIT', visibility: 'public' },
+        'SECURITY.md': 'always',
+      },
+    })
+    const filesChange = changes.find((c) => c.kind === 'files')
+    expect(filesChange.files).toEqual({ 'SECURITY.md': 'always' })
+  })
+
+  it('generates no files change when all files are filtered out', async () => {
+    const octokit = createMockOctokit()
+    const repo = makeRepo({ private: true })
+    const changes = await planRepo(octokit, repo, {
+      files: {
+        'LICENSE': { content: 'MIT', visibility: 'public' },
+      },
+    })
+    expect(changes.find((c) => c.kind === 'files')).toBeUndefined()
   })
 })
 

@@ -136,16 +136,33 @@ const planRepoUpdate = (desired) => {
   ]
 }
 
-const planFiles = (desired) => {
+const resolveFileVisibility = (filesConfig, repoVisibility) => {
+  if (!filesConfig || filesConfig === false) return null
+  const resolved = {}
+  for (const [path, entry] of Object.entries(filesConfig)) {
+    if (typeof entry === 'string') {
+      resolved[path] = entry
+    } else if (entry && typeof entry === 'object') {
+      if (!entry.visibility || entry.visibility === repoVisibility) {
+        resolved[path] = entry.content
+      }
+    }
+  }
+  return Object.keys(resolved).length ? resolved : null
+}
+
+const planFiles = (desired, repo) => {
   if (!desired.files || desired.files === false) return []
-  const names = Object.keys(desired.files)
-  if (names.length === 0) return []
+  const visibility = repo.private ? 'private' : repo.visibility || 'public'
+  const filtered = resolveFileVisibility(desired.files, visibility)
+  if (!filtered) return []
+  const names = Object.keys(filtered)
   return [
     {
       kind: 'files',
       id: 'files:pr',
       summary: `Open PR to update templated files (${names.join(', ')})`,
-      files: desired.files,
+      files: filtered,
       riskLevel: 'high',
     },
   ]
@@ -193,7 +210,7 @@ const planRepo = async (octokit, repo, desired) => {
     changes.push(...(await planRulesets(octokit, repo, desired.rulesets)))
   }
   changes.push(...planRepoUpdate(desired))
-  changes.push(...planFiles(desired))
+  changes.push(...planFiles(desired, repo))
 
   return changes
 }
@@ -207,6 +224,8 @@ module.exports = {
   planRepo,
   planBranchProtection,
   planRulesets,
+  planFiles,
+  resolveFileVisibility,
   splitByRisk,
   resolveBranchName,
   LOW_RISK_KINDS,
