@@ -144,12 +144,13 @@ const cronDispatcher = async () => {
 }
 
 const applyConsentedChanges = async (octokit, repo, issue) => {
-  // Only apply items the user has ticked AND we haven't already applied or
-  // marked as failed. Re-applying struck-through items would re-run idempotent
-  // calls for nothing (and breaks for non-idempotent ones like createPullRequest).
+  // Only apply items the user has ticked AND we haven't already applied. We
+  // do not exclude items that still carry the ⚠️ marker — re-ticking a
+  // failed row is the user's explicit retry signal; markItemsApplied will
+  // clear the ⚠️ if the retry succeeds.
   const items = parseAllItems(issue.body)
   const targetIds = new Set(
-    items.filter((i) => i.checked && !i.applied && !i.failed).map((i) => i.id),
+    items.filter((i) => i.checked && !i.applied).map((i) => i.id),
   )
   if (!targetIds.size) return { applied: 0 }
 

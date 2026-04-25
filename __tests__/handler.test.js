@@ -180,12 +180,31 @@ describe('applyConsentedChanges', () => {
     expect(octokit.rest.repos.updateBranchProtection).not.toHaveBeenCalled()
   })
 
-  it('skips items in failed (⚠️) state', async () => {
+  it('skips items that are unticked even with the ⚠️ marker', async () => {
     const octokit = createMockOctokit()
     const issueBody = `- [ ] <!-- repomanager:${encodeId('bp:main')} --> ⚠️ Apply BP`
     const result = await applyConsentedChanges(octokit, makeRepo(), { number: 9, body: issueBody })
     expect(result.applied).toBe(0)
     expect(octokit.rest.repos.updateBranchProtection).not.toHaveBeenCalled()
+  })
+
+  it('retries an item that is re-ticked while still carrying the ⚠️ marker', async () => {
+    const octokit = createMockOctokit()
+    const repoYaml = [
+      'branchProtection:',
+      "  - branch: '__DEFAULT_BRANCH__'",
+      '    required_linear_history: true',
+    ].join('\n')
+    octokit.rest.repos.getContent
+      .mockRejectedValueOnce(Object.assign(new Error('nf'), { status: 404 }))
+      .mockResolvedValueOnce({ data: { content: base64(repoYaml) } })
+    const issueBody = `- [x] <!-- repomanager:${encodeId('bp:main')} --> ⚠️ Apply BP`
+    octokit.rest.issues.get.mockResolvedValue({
+      data: { number: 9, state: 'open', body: issueBody },
+    })
+    const result = await applyConsentedChanges(octokit, makeRepo(), { number: 9, body: issueBody })
+    expect(result.applied).toBe(1)
+    expect(octokit.rest.repos.updateBranchProtection).toHaveBeenCalled()
   })
 
   it('posts a sanitised comment when an apply fails and unticks the box', async () => {
