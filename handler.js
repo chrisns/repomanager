@@ -6,6 +6,7 @@ const {
   upsertConsentIssue,
   parseCheckedItems,
   markItemsApplied,
+  postFailureComment,
   openInvalidConfigIssue,
   closeInvalidConfigIssue,
   CONSENT_LABEL,
@@ -157,16 +158,31 @@ const applyConsentedChanges = async (octokit, repo, issue) => {
 
   const results = await applyChanges(octokit, repo, toApply, { dryRun: isDryRun() })
   const appliedIds = new Set(results.filter((r) => r.status === 'applied').map((r) => r.change.id))
-  if (appliedIds.size) {
+  const failures = results.filter((r) => r.status === 'failed')
+  const failedIds = new Set(failures.map((r) => r.change.id))
+  if (appliedIds.size || failedIds.size) {
     try {
-      await markItemsApplied(octokit, repo, issue.number, appliedIds)
+      await markItemsApplied(octokit, repo, issue.number, appliedIds, failedIds)
     } catch (error) {
       console.error(
         `${repo.owner.login}/${repo.name}: failed to update consent issue: ${error.message}`,
       )
     }
   }
-  return { applied: appliedIds.size }
+  if (failures.length) {
+    try {
+      await postFailureComment(octokit, repo, issue.number, failures.map((r) => ({
+        id: r.change.id,
+        summary: r.change.summary,
+        error: r.error,
+      })))
+    } catch (error) {
+      console.error(
+        `${repo.owner.login}/${repo.name}: failed to post error comment: ${error.message}`,
+      )
+    }
+  }
+  return { applied: appliedIds.size, failed: failures.length }
 }
 
 const handleIssuesEdited = async (octokit, payload) => {

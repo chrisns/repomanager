@@ -4,6 +4,9 @@ const {
   parseAllItems,
   upsertConsentIssue,
   markItemsApplied,
+  postFailureComment,
+  sanitizeErrorMessage,
+  renderFailureCommentBody,
   openInvalidConfigIssue,
   closeInvalidConfigIssue,
   encodeId,
@@ -77,12 +80,20 @@ describe('parseAllItems', () => {
       `- [ ] <!-- repomanager:${encodeId('a')} --> A`,
       `- [x] <!-- repomanager:${encodeId('bp:main')} --> B`,
       `- [x] <!-- repomanager:${encodeId('done')} --> ~~Done thing~~`,
+      `- [ ] <!-- repomanager:${encodeId('errored')} --> ⚠️ Failed thing`,
     ].join('\n')
     const items = parseAllItems(body)
     expect(items).toEqual([
-      { id: 'a', checked: false, applied: false, summary: 'A' },
-      { id: 'bp:main', checked: true, applied: false, summary: 'B' },
-      { id: 'done', checked: true, applied: true, summary: 'Done thing' },
+      { id: 'a', checked: false, applied: false, failed: false, summary: 'A' },
+      { id: 'bp:main', checked: true, applied: false, failed: false, summary: 'B' },
+      { id: 'done', checked: true, applied: true, failed: false, summary: 'Done thing' },
+      {
+        id: 'errored',
+        checked: false,
+        applied: false,
+        failed: true,
+        summary: 'Failed thing',
+      },
     ])
   })
 })
@@ -212,6 +223,116 @@ describe('markItemsApplied concurrent writers', () => {
     })
     await markItemsApplied(octokit, makeRepo(), 1, new Set(['a']))
     expect(octokit.rest.issues.update).not.toHaveBeenCalled()
+  })
+})
+
+describe('markItemsApplied failure marker', () => {
+  it('unticks the box and prefixes ⚠️ when an item fails to apply', async () => {
+    let body = `- [x] <!-- repomanager:${encodeId('a')} --> A`
+    const octokit = createMockOctokit()
+    octokit.rest.issues.get = jest.fn(async () => ({
+      data: { number: 7, state: 'open', body },
+    }))
+    octokit.rest.issues.update = jest.fn(async (args) => {
+      if (args.body) body = args.body
+      return { data: {} }
+    })
+    await markItemsApplied(octokit, makeRepo(), 7, new Set(), new Set(['a']))
+    expect(body).toContain(`- [ ] <!-- repomanager:${encodeId('a')} --> ⚠️ A`)
+  })
+
+  it('clears ⚠️ and adds strike-through when a failed item is later applied', async () => {
+    let body = `- [ ] <!-- repomanager:${encodeId('a')} --> ⚠️ A`
+    const octokit = createMockOctokit()
+    octokit.rest.issues.get = jest.fn(async () => ({
+      data: { number: 7, state: 'open', body },
+    }))
+    octokit.rest.issues.update = jest.fn(async (args) => {
+      if (args.body) body = args.body
+      return { data: {} }
+    })
+    await markItemsApplied(octokit, makeRepo(), 7, new Set(['a']), new Set())
+    expect(body).toContain(`- [x] <!-- repomanager:${encodeId('a')} --> ~~A~~`)
+    expect(body).not.toContain('⚠️')
+  })
+})
+
+// Build PAT/bearer-shaped fixtures at runtime so the literal token shape
+// doesn't appear in source — keeps secret-scanners happy while still
+// triggering the redaction regex when the test runs.
+const fakePat = ['gh', 'p', '_', 'a'.repeat(36)].join('')
+const fakeBearerToken = ['x'.repeat(20), '.', 'y'.repeat(20), '.', 'z'.repeat(8)].join('')
+
+describe('sanitizeErrorMessage', () => {
+  it('redacts GitHub PAT-shaped tokens', () => {
+    const out = sanitizeErrorMessage(`failed: ${fakePat}`)
+    expect(out).not.toContain(fakePat)
+    expect(out).toContain('[REDACTED]')
+  })
+
+  it('redacts bearer auth headers', () => {
+    expect(sanitizeErrorMessage(`Authorization: Bearer ${fakeBearerToken}`)).toMatch(
+      /\[REDACTED\]/,
+    )
+  })
+
+  it('redacts PEM private keys', () => {
+    const pem =
+      '-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----'
+    const out = sanitizeErrorMessage(`crash: ${pem} done`)
+    expect(out).not.toContain('MIIEowIBAAKCAQEA')
+    expect(out).toContain('[REDACTED]')
+  })
+
+  it('redacts named secret/token/key=value pairs', () => {
+    const out = sanitizeErrorMessage('boom token=abcdefgh1234567890 secret: hunter2hunter2')
+    expect(out).not.toMatch(/abcdefgh1234567890/)
+    expect(out).not.toMatch(/hunter2hunter2/)
+  })
+
+  it('truncates very long messages', () => {
+    const big = 'x'.repeat(10000)
+    const out = sanitizeErrorMessage(big)
+    expect(out.length).toBeLessThan(5000)
+    expect(out).toMatch(/truncated/)
+  })
+
+  it('passes safe text through unchanged', () => {
+    const out = sanitizeErrorMessage('Invalid property /rules/3: data matches no possible input.')
+    expect(out).toBe('Invalid property /rules/3: data matches no possible input.')
+  })
+})
+
+describe('postFailureComment', () => {
+  it('creates a single comment summarising every failed item with sanitised errors', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.issues.createComment = jest.fn(async () => ({ data: {} }))
+    await postFailureComment(octokit, makeRepo(), 7, [
+      {
+        id: 'ruleset:create:r',
+        summary: 'Create ruleset r',
+        error: { message: 'Invalid property /rules/3: data matches no possible input' },
+      },
+      {
+        id: 'files:pr',
+        summary: 'Open PR',
+        error: { message: `leaked ${fakePat} here` },
+      },
+    ])
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledTimes(1)
+    const body = octokit.rest.issues.createComment.mock.calls[0][0].body
+    expect(body).toContain('`ruleset:create:r`')
+    expect(body).toContain('`files:pr`')
+    expect(body).toContain('Invalid property /rules/3')
+    expect(body).not.toContain(fakePat)
+    expect(body).toContain('[REDACTED]')
+  })
+
+  it('does nothing when there are no failures', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.issues.createComment = jest.fn(async () => ({ data: {} }))
+    await postFailureComment(octokit, makeRepo(), 7, [])
+    expect(octokit.rest.issues.createComment).not.toHaveBeenCalled()
   })
 })
 

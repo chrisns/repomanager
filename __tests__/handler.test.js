@@ -163,6 +163,36 @@ describe('applyConsentedChanges', () => {
     const result = await applyConsentedChanges(octokit, makeRepo(), { number: 1, body: '- [ ] a' })
     expect(result.applied).toBe(0)
   })
+
+  it('posts a sanitised comment when an apply fails and unticks the box', async () => {
+    const octokit = createMockOctokit()
+    const repoYaml = [
+      'branchProtection:',
+      "  - branch: '__DEFAULT_BRANCH__'",
+      '    required_linear_history: true',
+    ].join('\n')
+    octokit.rest.repos.getContent
+      .mockRejectedValueOnce(Object.assign(new Error('nf'), { status: 404 }))
+      .mockResolvedValueOnce({ data: { content: base64(repoYaml) } })
+    const issueBody = `- [x] <!-- repomanager:${encodeId('bp:main')} --> Apply BP`
+    octokit.rest.issues.get.mockResolvedValue({
+      data: { number: 9, state: 'open', body: issueBody },
+    })
+    const fakePat = ['gh', 'p', '_', 'a'.repeat(36)].join('')
+    octokit.rest.repos.updateBranchProtection.mockRejectedValue(
+      new Error(`boom ${fakePat}`),
+    )
+
+    const result = await applyConsentedChanges(octokit, makeRepo(), { number: 9, body: issueBody })
+    expect(result.failed).toBe(1)
+    expect(octokit.rest.issues.createComment).toHaveBeenCalledTimes(1)
+    const commentBody = octokit.rest.issues.createComment.mock.calls[0][0].body
+    expect(commentBody).toContain('`bp:main`')
+    expect(commentBody).not.toContain(fakePat)
+    expect(commentBody).toContain('[REDACTED]')
+    const updateCall = octokit.rest.issues.update.mock.calls.find((c) => c[0].issue_number === 9)
+    expect(updateCall[0].body).toContain(`- [ ] <!-- repomanager:${encodeId('bp:main')} --> ⚠️`)
+  })
 })
 
 describe('cronWorker', () => {

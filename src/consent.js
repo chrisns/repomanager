@@ -11,13 +11,31 @@ const HEADER = '<!-- repomanager:plan v1 -->'
 const encodeId = (id) => encodeURIComponent(id).replace(/-/g, '%2D')
 const decodeId = (encoded) => decodeURIComponent(encoded)
 
-const renderChangeLine = (change, { checked = false, applied = false } = {}) => {
-  const box = checked || applied ? '[x]' : '[ ]'
-  const text = applied ? `~~${change.summary}~~` : change.summary
+const WARNING_MARKER = '⚠️'
+
+const renderChangeLine = (
+  change,
+  { checked = false, applied = false, failed = false } = {},
+) => {
+  let box = '[ ]'
+  let text = change.summary
+  if (applied) {
+    box = '[x]'
+    text = `~~${change.summary}~~`
+  } else if (failed) {
+    // Failed apply: untick the box so the user has to explicitly retry, and
+    // prepend a warning so it's obvious which item needs attention.
+    text = `${WARNING_MARKER} ${change.summary}`
+  } else if (checked) {
+    box = '[x]'
+  }
   return `- ${box} <!-- ${MARKER_PREFIX}${encodeId(change.id)} --> ${text}`
 }
 
-const renderPlan = (changes, { appliedIds = new Set(), checkedIds = new Set() } = {}) => {
+const renderPlan = (
+  changes,
+  { appliedIds = new Set(), checkedIds = new Set(), failedIds = new Set() } = {},
+) => {
   if (!changes.length) {
     return `${HEADER}\n\nNo pending changes. repomanager is happy. ✨\n`
   }
@@ -47,6 +65,7 @@ const renderPlan = (changes, { appliedIds = new Set(), checkedIds = new Set() } 
       renderChangeLine(change, {
         applied: appliedIds.has(change.id),
         checked: checkedIds.has(change.id),
+        failed: failedIds.has(change.id),
       }),
     )
   }
@@ -84,12 +103,25 @@ const parseAllItems = (body) => {
   while ((match = regex.exec(body)) !== null) {
     let summary = match[3]
     let applied = false
+    let failed = false
     const strikeMatch = summary.match(/^~~(.*)~~\s*$/)
     if (strikeMatch) {
       summary = strikeMatch[1]
       applied = true
+    } else {
+      const warnMatch = summary.match(/^⚠️\s+(.*)$/)
+      if (warnMatch) {
+        summary = warnMatch[1]
+        failed = true
+      }
     }
-    items.push({ id: decodeId(match[2]), checked: match[1] === 'x', applied, summary })
+    items.push({
+      id: decodeId(match[2]),
+      checked: match[1] === 'x',
+      applied,
+      failed,
+      summary,
+    })
   }
   return items
 }
@@ -179,12 +211,13 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
     return existing
   }
 
-  // Preserve user ticks and applied/strike-through state across updates so
-  // periodic cron-driven upserts don't wipe progress the webhook flow has
-  // already recorded.
+  // Preserve user ticks, applied/strike-through and ⚠️ failure state across
+  // updates so periodic cron-driven upserts don't wipe progress the webhook
+  // flow has already recorded.
   const previous = new Map(parseAllItems(existing.body).map((i) => [i.id, i]))
   const checkedIds = new Set()
   const appliedIds = new Set()
+  const failedIds = new Set()
   let hasUnapplied = false
   for (const c of changes) {
     const prev = previous.get(c.id)
@@ -193,10 +226,11 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
       continue
     }
     hasUnapplied = true
-    if (prev && prev.checked) checkedIds.add(c.id)
+    if (prev && prev.failed) failedIds.add(c.id)
+    else if (prev && prev.checked) checkedIds.add(c.id)
   }
 
-  const body = renderPlan(changes, { appliedIds, checkedIds })
+  const body = renderPlan(changes, { appliedIds, checkedIds, failedIds })
   const update = { owner, repo: name, issue_number: existing.number, body }
 
   if (existing.state === 'open' && !hasUnapplied) {
@@ -225,11 +259,18 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
 // strike-throughs, never remove them.
 const MARK_APPLIED_MAX_ATTEMPTS = 5
 
-const markItemsApplied = async (octokit, repo, issueNumber, appliedIds) => {
+const markItemsApplied = async (
+  octokit,
+  repo,
+  issueNumber,
+  appliedIds,
+  failedIds = new Set(),
+) => {
   const owner = repo.owner.login
   const name = repo.name
-  const targetIds = [...appliedIds]
-  if (!targetIds.length) return
+  const appliedTargets = [...appliedIds]
+  const failedTargets = [...failedIds].filter((id) => !appliedIds.has(id))
+  if (!appliedTargets.length && !failedTargets.length) return
   for (let attempt = 0; attempt < MARK_APPLIED_MAX_ATTEMPTS; attempt++) {
     const { data: issue } = await octokit.rest.issues.get({
       owner,
@@ -238,11 +279,16 @@ const markItemsApplied = async (octokit, repo, issueNumber, appliedIds) => {
     })
     const items = parseAllItems(issue.body)
     const byId = new Map(items.map((i) => [i.id, i]))
-    const allStruck = targetIds.every((id) => {
-      const item = byId.get(id)
-      return !item || item.applied
-    })
-    if (allStruck) {
+    const reflected =
+      appliedTargets.every((id) => {
+        const item = byId.get(id)
+        return !item || item.applied
+      }) &&
+      failedTargets.every((id) => {
+        const item = byId.get(id)
+        return !item || item.failed
+      })
+    if (reflected) {
       // Our own writes have landed. If every checkbox is now applied, the
       // consent issue is fully resolved — close it.
       if (
@@ -262,14 +308,82 @@ const markItemsApplied = async (octokit, repo, issueNumber, appliedIds) => {
     }
     const changes = items.map((i) => ({ id: i.id, summary: i.summary }))
     const mergedApplied = new Set(items.filter((i) => i.applied).map((i) => i.id))
-    for (const id of targetIds) mergedApplied.add(id)
+    const mergedFailed = new Set(items.filter((i) => i.failed).map((i) => i.id))
+    // This round's results take precedence: a successful retry clears any
+    // previous ⚠️, a fresh failure clears any previous (stale) applied state.
+    for (const id of appliedTargets) {
+      mergedApplied.add(id)
+      mergedFailed.delete(id)
+    }
+    for (const id of failedTargets) {
+      mergedFailed.add(id)
+      mergedApplied.delete(id)
+    }
     const mergedChecked = new Set()
     for (const i of items) {
-      if (i.checked && !mergedApplied.has(i.id)) mergedChecked.add(i.id)
+      if (i.checked && !mergedApplied.has(i.id) && !mergedFailed.has(i.id)) {
+        mergedChecked.add(i.id)
+      }
     }
-    const body = renderPlan(changes, { appliedIds: mergedApplied, checkedIds: mergedChecked })
+    const body = renderPlan(changes, {
+      appliedIds: mergedApplied,
+      checkedIds: mergedChecked,
+      failedIds: mergedFailed,
+    })
     await octokit.rest.issues.update({ owner, repo: name, issue_number: issueNumber, body })
   }
+}
+
+// Strip anything that looks credential-shaped before posting an error message
+// to a public issue. Conservative pattern set: GitHub PATs, app tokens, Bearer
+// auth, the App's PEM-style cert, anything that names "secret"/"token"/"key"/
+// "password" with a value next to it. Errors longer than 4kB are truncated.
+const SECRET_PATTERNS = [
+  /gh[psour]_[A-Za-z0-9]{20,}/g,
+  /Bearer\s+[A-Za-z0-9._\-+/=]+/gi,
+  /Authorization\s*[:=]\s*\S+/gi,
+  /-----BEGIN [^-]+-----[\s\S]+?-----END [^-]+-----/g,
+  /\b(secret|token|key|password|api[_\-]?key)["'\s:=]+[A-Za-z0-9._\-+/=]{8,}/gi,
+]
+
+const sanitizeErrorMessage = (input) => {
+  if (input == null) return ''
+  let out = String(input)
+  for (const pattern of SECRET_PATTERNS) out = out.replace(pattern, '[REDACTED]')
+  if (out.length > 4000) out = out.slice(0, 4000) + '… (truncated)'
+  return out
+}
+
+const renderFailureCommentBody = (failures) => {
+  const lines = [
+    '<!-- repomanager:apply-errors v1 -->',
+    '',
+    `repomanager hit ${failures.length === 1 ? 'an error' : 'errors'} applying the following — the box${failures.length === 1 ? ' has' : 'es have'} been unticked. Re-tick to retry.`,
+    '',
+  ]
+  for (const f of failures) {
+    const id = f.id || (f.change && f.change.id) || 'unknown'
+    const summary = f.summary || (f.change && f.change.summary) || ''
+    const message = sanitizeErrorMessage(f.error && (f.error.message || f.error))
+    lines.push(`### \`${id}\``)
+    if (summary) lines.push(`> ${summary}`)
+    lines.push('')
+    lines.push('```')
+    lines.push(message)
+    lines.push('```')
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
+const postFailureComment = async (octokit, repo, issueNumber, failures) => {
+  if (!failures || !failures.length) return
+  await octokit.rest.issues.createComment({
+    owner: repo.owner.login,
+    repo: repo.name,
+    issue_number: issueNumber,
+    body: renderFailureCommentBody(failures),
+  })
 }
 
 const openInvalidConfigIssue = async (octokit, repo, errors) => {
@@ -329,6 +443,7 @@ module.exports = {
   INVALID_CONFIG_LABEL,
   ISSUE_TITLE,
   INVALID_TITLE,
+  WARNING_MARKER,
   encodeId,
   decodeId,
   renderPlan,
@@ -336,6 +451,9 @@ module.exports = {
   parseAllItems,
   upsertConsentIssue,
   markItemsApplied,
+  postFailureComment,
+  sanitizeErrorMessage,
+  renderFailureCommentBody,
   openInvalidConfigIssue,
   closeInvalidConfigIssue,
   findOpenIssueByLabel,

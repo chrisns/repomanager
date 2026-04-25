@@ -47,6 +47,7 @@ const createMockOctokit = () => {
         get: jest.fn(async () => ({ data: { body: '', number: 42 } })),
         getLabel: jest.fn(async () => ({ data: {} })),
         createLabel: jest.fn(async () => ({ data: {} })),
+        createComment: jest.fn(async (args) => ({ data: { id: 1, ...args } })),
       },
     },
   }
