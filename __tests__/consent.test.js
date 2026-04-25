@@ -76,11 +76,13 @@ describe('parseAllItems', () => {
     const body = [
       `- [ ] <!-- repomanager:${encodeId('a')} --> A`,
       `- [x] <!-- repomanager:${encodeId('bp:main')} --> B`,
+      `- [x] <!-- repomanager:${encodeId('done')} --> ~~Done thing~~`,
     ].join('\n')
     const items = parseAllItems(body)
     expect(items).toEqual([
-      { id: 'a', checked: false, summary: 'A' },
-      { id: 'bp:main', checked: true, summary: 'B' },
+      { id: 'a', checked: false, applied: false, summary: 'A' },
+      { id: 'bp:main', checked: true, applied: false, summary: 'B' },
+      { id: 'done', checked: true, applied: true, summary: 'Done thing' },
     ])
   })
 })
@@ -141,21 +143,50 @@ describe('upsertConsentIssue', () => {
 })
 
 describe('markItemsApplied', () => {
-  it('rewrites the body with applied items ticked', async () => {
+  it('strikes through applied items and leaves untouched items alone', async () => {
     const octokit = createMockOctokit()
     octokit.rest.issues.get.mockResolvedValue({
       data: {
         number: 7,
         body: [
-          `- [ ] <!-- repomanager:${encodeId('a')} --> A`,
+          `- [x] <!-- repomanager:${encodeId('a')} --> A`,
           `- [ ] <!-- repomanager:${encodeId('b')} --> B`,
+          `- [x] <!-- repomanager:${encodeId('c')} --> ~~C~~`,
         ].join('\n'),
       },
     })
     await markItemsApplied(octokit, makeRepo(), 7, new Set(['a']))
     const updateCall = octokit.rest.issues.update.mock.calls.find((c) => c[0].issue_number === 7)
-    expect(updateCall[0].body).toContain(`- [x] <!-- repomanager:${encodeId('a')} --> A`)
+    expect(updateCall[0].body).toContain(`- [x] <!-- repomanager:${encodeId('a')} --> ~~A~~`)
     expect(updateCall[0].body).toContain(`- [ ] <!-- repomanager:${encodeId('b')} --> B`)
+    expect(updateCall[0].body).toContain(`- [x] <!-- repomanager:${encodeId('c')} --> ~~C~~`)
+  })
+})
+
+describe('upsertConsentIssue state preservation', () => {
+  it('preserves user ticks and applied strike-through when re-rendering', async () => {
+    const octokit = createMockOctokit()
+    const existingBody = [
+      `- [x] <!-- repomanager:${encodeId('files:pr')} --> ~~Open PR to update templated files~~`,
+      `- [x] <!-- repomanager:${encodeId('bp:main')} --> Apply BP`,
+      `- [ ] <!-- repomanager:${encodeId('repo:update')} --> Update repo settings`,
+    ].join('\n')
+    octokit.rest.issues.listForRepo.mockResolvedValue({
+      data: [{ number: 9, title: ISSUE_TITLE, body: existingBody }],
+    })
+    await upsertConsentIssue(octokit, makeRepo(), [
+      { id: 'files:pr', kind: 'files', summary: 'Open PR to update templated files' },
+      { id: 'bp:main', kind: 'branchProtection', summary: 'Apply BP' },
+      { id: 'repo:update', kind: 'repo', summary: 'Update repo settings' },
+    ])
+    const updateCall = octokit.rest.issues.update.mock.calls.find((c) => c[0].issue_number === 9)
+    expect(updateCall[0].body).toContain(
+      `- [x] <!-- repomanager:${encodeId('files:pr')} --> ~~Open PR to update templated files~~`,
+    )
+    expect(updateCall[0].body).toContain(`- [x] <!-- repomanager:${encodeId('bp:main')} --> Apply BP`)
+    expect(updateCall[0].body).toContain(
+      `- [ ] <!-- repomanager:${encodeId('repo:update')} --> Update repo settings`,
+    )
   })
 })
 

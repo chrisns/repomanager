@@ -11,12 +11,13 @@ const HEADER = '<!-- repomanager:plan v1 -->'
 const encodeId = (id) => encodeURIComponent(id).replace(/-/g, '%2D')
 const decodeId = (encoded) => decodeURIComponent(encoded)
 
-const renderChangeLine = (change, checked = false) => {
-  const box = checked ? '[x]' : '[ ]'
-  return `- ${box} <!-- ${MARKER_PREFIX}${encodeId(change.id)} --> ${change.summary}`
+const renderChangeLine = (change, { checked = false, applied = false } = {}) => {
+  const box = checked || applied ? '[x]' : '[ ]'
+  const text = applied ? `~~${change.summary}~~` : change.summary
+  return `- ${box} <!-- ${MARKER_PREFIX}${encodeId(change.id)} --> ${text}`
 }
 
-const renderPlan = (changes, { appliedIds = new Set() } = {}) => {
+const renderPlan = (changes, { appliedIds = new Set(), checkedIds = new Set() } = {}) => {
   if (!changes.length) {
     return `${HEADER}\n\nNo pending changes. repomanager is happy. ✨\n`
   }
@@ -42,7 +43,12 @@ const renderPlan = (changes, { appliedIds = new Set() } = {}) => {
   lines.push('## Proposed changes')
   lines.push('')
   for (const change of changes) {
-    lines.push(renderChangeLine(change, appliedIds.has(change.id)))
+    lines.push(
+      renderChangeLine(change, {
+        applied: appliedIds.has(change.id),
+        checked: checkedIds.has(change.id),
+      }),
+    )
   }
   lines.push('')
   lines.push('---')
@@ -76,7 +82,14 @@ const parseAllItems = (body) => {
   )
   let match
   while ((match = regex.exec(body)) !== null) {
-    items.push({ id: decodeId(match[2]), checked: match[1] === 'x', summary: match[3] })
+    let summary = match[3]
+    let applied = false
+    const strikeMatch = summary.match(/^~~(.*)~~\s*$/)
+    if (strikeMatch) {
+      summary = strikeMatch[1]
+      applied = true
+    }
+    items.push({ id: decodeId(match[2]), checked: match[1] === 'x', applied, summary })
   }
   return items
 }
@@ -122,7 +135,6 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
     'repomanager: pending config changes awaiting approval',
   )
   const existing = await findOpenIssueByLabel(octokit, owner, name, CONSENT_LABEL, ISSUE_TITLE)
-  const body = renderPlan(changes)
 
   if (!existing) {
     if (!changes.length) return null
@@ -130,7 +142,7 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
       owner,
       repo: name,
       title: ISSUE_TITLE,
-      body,
+      body: renderPlan(changes),
       labels: [CONSENT_LABEL],
     })
     return data
@@ -147,11 +159,24 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
     return existing
   }
 
+  // Preserve user ticks and applied/strike-through state across updates so
+  // periodic cron-driven upserts don't wipe progress the webhook flow has
+  // already recorded.
+  const previous = new Map(parseAllItems(existing.body).map((i) => [i.id, i]))
+  const checkedIds = new Set()
+  const appliedIds = new Set()
+  for (const c of changes) {
+    const prev = previous.get(c.id)
+    if (!prev) continue
+    if (prev.applied) appliedIds.add(c.id)
+    else if (prev.checked) checkedIds.add(c.id)
+  }
+
   await octokit.rest.issues.update({
     owner,
     repo: name,
     issue_number: existing.number,
-    body,
+    body: renderPlan(changes, { appliedIds, checkedIds }),
   })
   return existing
 }
@@ -165,12 +190,14 @@ const markItemsApplied = async (octokit, repo, issueNumber, appliedIds) => {
     issue_number: issueNumber,
   })
   const items = parseAllItems(issue.body)
-  const updatedItems = items.map((i) => (appliedIds.has(i.id) ? { ...i, checked: true } : i))
-  const changes = updatedItems.map((i) => ({ id: i.id, summary: i.summary }))
-  const body = renderPlan(
-    changes,
-    { appliedIds: new Set(updatedItems.filter((i) => i.checked).map((i) => i.id)) },
-  )
+  const changes = items.map((i) => ({ id: i.id, summary: i.summary }))
+  const mergedApplied = new Set(items.filter((i) => i.applied).map((i) => i.id))
+  const mergedChecked = new Set()
+  for (const id of appliedIds) mergedApplied.add(id)
+  for (const i of items) {
+    if (i.checked && !mergedApplied.has(i.id)) mergedChecked.add(i.id)
+  }
+  const body = renderPlan(changes, { appliedIds: mergedApplied, checkedIds: mergedChecked })
   await octokit.rest.issues.update({ owner, repo: name, issue_number: issueNumber, body })
 }
 
