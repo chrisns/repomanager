@@ -287,6 +287,35 @@ describe('webhook entry', () => {
     mockedOctokitModule.__state.verifyShouldThrow = false
   })
 
+  it('decodes base64-encoded API Gateway bodies before verifying', async () => {
+    const octokit = createMockOctokit()
+    mockedOctokitModule.__state.octokit = octokit
+    const payload = JSON.stringify({
+      repository: makeRepo(),
+      commits: [{ added: [], modified: [], removed: [] }],
+    })
+    const original = mockedOctokitModule.__webhooks.verifyAndReceive
+    let received
+    mockedOctokitModule.__webhooks.verifyAndReceive = async (args) => {
+      received = args
+    }
+    try {
+      const result = await webhook({
+        isBase64Encoded: true,
+        headers: {
+          'x-hub-signature-256': 'sha256=ignored',
+          'x-github-delivery': 'd3',
+          'x-github-event': 'push',
+        },
+        body: Buffer.from(payload).toString('base64'),
+      })
+      expect(result.statusCode).toBe(202)
+      expect(received.payload).toBe(payload)
+    } finally {
+      mockedOctokitModule.__webhooks.verifyAndReceive = original
+    }
+  })
+
   it('handles issues.edited consent events through the webhook dispatcher', async () => {
     const octokit = createMockOctokit()
     const repoYaml = [

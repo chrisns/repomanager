@@ -216,7 +216,9 @@ const webhook = async (event) => {
   const signature = headers['x-hub-signature-256'] || headers['X-Hub-Signature-256']
   const id = headers['x-github-delivery'] || headers['X-GitHub-Delivery']
   const name = headers['x-github-event'] || headers['X-GitHub-Event']
-  const body = event.body || ''
+  const body = event.isBase64Encoded
+    ? Buffer.from(event.body || '', 'base64').toString('utf8')
+    : event.body || ''
 
   try {
     await app.webhooks.verifyAndReceive({ id, name, signature, payload: body })
