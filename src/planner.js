@@ -47,15 +47,52 @@ const planBranchProtection = async (octokit, repo, desired) => {
   return changes
 }
 
-const rulesetEquals = (a, b) => {
-  if (!a || !b) return false
-  if (a.enforcement !== b.enforcement) return false
-  if (a.target !== b.target) return false
-  try {
-    return JSON.stringify(a.rules || []) === JSON.stringify(b.rules || [])
-  } catch {
-    return false
+// True when `actual` contains every key/value declared in `expected`. Arrays
+// must match length and order; primitives must be strictly equal. Used to
+// compare a stored ruleset against the one we want — GitHub adds default
+// fields server-side (e.g. required_reviewers: [], allowed_merge_methods)
+// that our config never declared, so a strict deep-equal would diff forever.
+const matchesShape = (actual, expected) => {
+  if (expected === null || expected === undefined) return actual == expected
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual)) return false
+    if (actual.length !== expected.length) return false
+    return expected.every((e, i) => matchesShape(actual[i], e))
   }
+  if (typeof expected === 'object') {
+    if (typeof actual !== 'object' || actual === null || Array.isArray(actual)) return false
+    return Object.keys(expected).every((k) => matchesShape(actual[k], expected[k]))
+  }
+  return actual === expected
+}
+
+const rulesetEquals = (existing, desired) => {
+  if (!existing || !desired) return false
+  if (existing.enforcement !== desired.enforcement) return false
+  if (existing.target !== desired.target) return false
+  const exRules = existing.rules || []
+  const dRules = desired.rules || []
+  if (exRules.length !== dRules.length) return false
+  // Each desired rule must match some existing rule of the same type — using
+  // subset semantics on parameters so GitHub's server-side defaults don't
+  // make the comparison flip permanently.
+  const used = new Set()
+  for (const dr of dRules) {
+    const idx = exRules.findIndex(
+      (er, i) =>
+        !used.has(i) &&
+        er.type === dr.type &&
+        matchesShape(er.parameters || {}, dr.parameters || {}),
+    )
+    if (idx === -1) return false
+    used.add(idx)
+  }
+  // bypass_actors: every desired entry must be present in existing.
+  const exBypass = existing.bypass_actors || []
+  for (const db of desired.bypass_actors || []) {
+    if (!exBypass.some((eb) => matchesShape(eb, db))) return false
+  }
+  return true
 }
 
 const planRulesets = async (octokit, repo, desired) => {

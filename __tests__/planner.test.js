@@ -125,6 +125,67 @@ describe('planRepo', () => {
     const changes = await planRepo(octokit, repo, { rulesets: [rs] })
     expect(changes).toEqual([])
   })
+
+  it('treats GitHub-injected default rule parameters as a match (no spurious update)', async () => {
+    // Real-world: server stores the pull_request rule with extras like
+    // required_reviewers: [] and allowed_merge_methods that we never
+    // declared; we must not loop the planner into update-forever.
+    const octokit = createMockOctokit()
+    const desired = {
+      name: 'default-branch',
+      target: 'branch',
+      enforcement: 'active',
+      rules: [
+        {
+          type: 'pull_request',
+          parameters: {
+            required_approving_review_count: 1,
+            dismiss_stale_reviews_on_push: true,
+            require_code_owner_review: false,
+            require_last_push_approval: false,
+            required_review_thread_resolution: true,
+          },
+        },
+      ],
+    }
+    const stored = {
+      ...desired,
+      rules: [
+        {
+          type: 'pull_request',
+          parameters: {
+            ...desired.rules[0].parameters,
+            required_reviewers: [],
+            allowed_merge_methods: ['merge', 'squash', 'rebase'],
+          },
+        },
+      ],
+    }
+    octokit.paginate.mockResolvedValue([{ id: 9, name: 'default-branch' }])
+    octokit.rest.repos.getRepoRuleset.mockResolvedValue({ data: stored })
+    const changes = await planRepo(octokit, makeRepo(), { rulesets: [desired] })
+    expect(changes).toEqual([])
+  })
+
+  it('plans an update when bypass_actors changes', async () => {
+    const octokit = createMockOctokit()
+    const stored = {
+      name: 'default-branch',
+      target: 'branch',
+      enforcement: 'active',
+      bypass_actors: [],
+      rules: [{ type: 'deletion' }],
+    }
+    octokit.paginate.mockResolvedValue([{ id: 9, name: 'default-branch' }])
+    octokit.rest.repos.getRepoRuleset.mockResolvedValue({ data: stored })
+    const desired = {
+      ...stored,
+      bypass_actors: [{ actor_id: 5, actor_type: 'RepositoryRole', bypass_mode: 'always' }],
+    }
+    const changes = await planRepo(octokit, makeRepo(), { rulesets: [desired] })
+    expect(changes).toHaveLength(1)
+    expect(changes[0].action).toBe('update')
+  })
 })
 
 describe('resolveFileVisibility', () => {
