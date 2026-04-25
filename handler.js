@@ -4,7 +4,7 @@ const { planRepo, splitByRisk } = require('./src/planner')
 const { applyChanges } = require('./src/applier')
 const {
   upsertConsentIssue,
-  parseCheckedItems,
+  parseAllItems,
   markItemsApplied,
   postFailureComment,
   openInvalidConfigIssue,
@@ -144,8 +144,14 @@ const cronDispatcher = async () => {
 }
 
 const applyConsentedChanges = async (octokit, repo, issue) => {
-  const checkedIds = parseCheckedItems(issue.body)
-  if (!checkedIds.size) return { applied: 0 }
+  // Only apply items the user has ticked AND we haven't already applied or
+  // marked as failed. Re-applying struck-through items would re-run idempotent
+  // calls for nothing (and breaks for non-idempotent ones like createPullRequest).
+  const items = parseAllItems(issue.body)
+  const targetIds = new Set(
+    items.filter((i) => i.checked && !i.applied && !i.failed).map((i) => i.id),
+  )
+  if (!targetIds.size) return { applied: 0 }
 
   const { config, errors } = await getRepoConfig(repo.name, repo.owner.login, octokit)
   if (errors) {
@@ -153,7 +159,7 @@ const applyConsentedChanges = async (octokit, repo, issue) => {
     return { applied: 0 }
   }
   const changes = await planRepo(octokit, repo, config)
-  const toApply = changes.filter((c) => checkedIds.has(c.id))
+  const toApply = changes.filter((c) => targetIds.has(c.id))
   if (!toApply.length) return { applied: 0 }
 
   const results = await applyChanges(octokit, repo, toApply, { dryRun: isDryRun() })
@@ -191,6 +197,12 @@ const handleIssuesEdited = async (octokit, payload) => {
   if (issue.title !== ISSUE_TITLE) return
   const labels = (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name))
   if (!labels.includes(CONSENT_LABEL)) return
+  // Ignore edits we made ourselves (markItemsApplied / upsertConsentIssue).
+  // Otherwise every body update fans out into another applyConsentedChanges
+  // pass, re-running already-done apply calls (and tripping idempotency
+  // failures like "PR already exists").
+  const sender = payload.sender || {}
+  if (sender.type === 'Bot' && /\[bot\]$/.test(sender.login || '')) return
   await applyConsentedChanges(octokit, payload.repository, issue)
 }
 

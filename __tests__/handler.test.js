@@ -164,6 +164,30 @@ describe('applyConsentedChanges', () => {
     expect(result.applied).toBe(0)
   })
 
+  it('skips items that are already struck through (applied)', async () => {
+    const octokit = createMockOctokit()
+    const repoYaml = [
+      'branchProtection:',
+      "  - branch: '__DEFAULT_BRANCH__'",
+      '    required_linear_history: true',
+    ].join('\n')
+    octokit.rest.repos.getContent
+      .mockRejectedValueOnce(Object.assign(new Error('nf'), { status: 404 }))
+      .mockResolvedValueOnce({ data: { content: base64(repoYaml) } })
+    const issueBody = `- [x] <!-- repomanager:${encodeId('bp:main')} --> ~~Apply BP~~`
+    const result = await applyConsentedChanges(octokit, makeRepo(), { number: 9, body: issueBody })
+    expect(result.applied).toBe(0)
+    expect(octokit.rest.repos.updateBranchProtection).not.toHaveBeenCalled()
+  })
+
+  it('skips items in failed (⚠️) state', async () => {
+    const octokit = createMockOctokit()
+    const issueBody = `- [ ] <!-- repomanager:${encodeId('bp:main')} --> ⚠️ Apply BP`
+    const result = await applyConsentedChanges(octokit, makeRepo(), { number: 9, body: issueBody })
+    expect(result.applied).toBe(0)
+    expect(octokit.rest.repos.updateBranchProtection).not.toHaveBeenCalled()
+  })
+
   it('posts a sanitised comment when an apply fails and unticks the box', async () => {
     const octokit = createMockOctokit()
     const repoYaml = [
@@ -344,6 +368,31 @@ describe('webhook entry', () => {
     } finally {
       mockedOctokitModule.__webhooks.verifyAndReceive = original
     }
+  })
+
+  it('ignores issues.edited events triggered by the bot itself', async () => {
+    const octokit = createMockOctokit()
+    mockedOctokitModule.__state.octokit = octokit
+    await webhook({
+      headers: {
+        'x-hub-signature-256': 'sha256=ignored',
+        'x-github-delivery': 'd-self',
+        'x-github-event': 'issues',
+      },
+      body: JSON.stringify({
+        action: 'edited',
+        sender: { login: 'the-repository-manager[bot]', type: 'Bot' },
+        issue: {
+          number: 9,
+          title: 'repomanager: changes awaiting approval',
+          body: `- [x] <!-- repomanager:${encodeId('bp:main')} --> Apply BP`,
+          labels: [{ name: 'repomanager:consent' }],
+        },
+        repository: makeRepo(),
+      }),
+    })
+    expect(octokit.rest.repos.updateBranchProtection).not.toHaveBeenCalled()
+    expect(octokit.rest.issues.update).not.toHaveBeenCalled()
   })
 
   it('handles issues.edited consent events through the webhook dispatcher', async () => {

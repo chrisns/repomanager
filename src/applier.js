@@ -77,12 +77,16 @@ const applyFiles = async (octokit, repo, files) => {
     )
     return { skipped: true }
   }
+  // update: true makes the call idempotent — if a PR with this head branch
+  // already exists (open from a previous apply) the plugin updates it in
+  // place rather than throwing "Pull request already exists".
   return octokit.createPullRequest({
     owner: repo.owner.login,
     repo: repo.name,
     title: 'Update templated files',
     body: '',
     createWhenEmpty: false,
+    update: true,
     head: headBranch,
     changes: [
       {
