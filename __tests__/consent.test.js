@@ -163,6 +163,49 @@ describe('markItemsApplied', () => {
   })
 })
 
+describe('markItemsApplied concurrent writers', () => {
+  // Simulates two webhook invocations interleaving GET/PUT against a single
+  // shared issue body. Both writers must converge to a final body where
+  // their appliedIds are all struck through.
+  it('converges on overlapping strike-through when two writers race', async () => {
+    let body = [
+      `- [x] <!-- repomanager:${encodeId('a')} --> A`,
+      `- [x] <!-- repomanager:${encodeId('b')} --> B`,
+    ].join('\n')
+    const make = () => {
+      const oct = createMockOctokit()
+      oct.rest.issues.get = jest.fn(async () => ({ data: { number: 1, body } }))
+      oct.rest.issues.update = jest.fn(async ({ body: newBody }) => {
+        body = newBody
+        return { data: {} }
+      })
+      return oct
+    }
+    const o1 = make()
+    const o2 = make()
+    // Order chosen to expose the read-modify-write race: both writers
+    // GET, both compute, w1 PUTs, then w2 PUTs (w2 would otherwise
+    // overwrite w1).
+    const w1 = markItemsApplied(o1, makeRepo(), 1, new Set(['a']))
+    const w2 = markItemsApplied(o2, makeRepo(), 1, new Set(['b']))
+    await Promise.all([w1, w2])
+    expect(body).toContain(`- [x] <!-- repomanager:${encodeId('a')} --> ~~A~~`)
+    expect(body).toContain(`- [x] <!-- repomanager:${encodeId('b')} --> ~~B~~`)
+  })
+
+  it('is a no-op when its target items are already struck', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.issues.get.mockResolvedValue({
+      data: {
+        number: 1,
+        body: `- [x] <!-- repomanager:${encodeId('a')} --> ~~A~~`,
+      },
+    })
+    await markItemsApplied(octokit, makeRepo(), 1, new Set(['a']))
+    expect(octokit.rest.issues.update).not.toHaveBeenCalled()
+  })
+})
+
 describe('upsertConsentIssue state preservation', () => {
   it('preserves user ticks and applied strike-through when re-rendering', async () => {
     const octokit = createMockOctokit()

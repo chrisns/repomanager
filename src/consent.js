@@ -181,24 +181,43 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
   return existing
 }
 
+// Concurrent issues.edited webhooks (e.g. user ticking two boxes quickly) race
+// on read-modify-write of the issue body — last PUT wins, so an earlier
+// writer's strike-through gets overwritten. We loop: re-fetch, merge our
+// applied ids with any other writer's persisted state, write, and verify on
+// the next pass. Convergence is guaranteed because each writer's contribution
+// (its appliedIds) is monotonically additive — every retry can only add
+// strike-throughs, never remove them.
+const MARK_APPLIED_MAX_ATTEMPTS = 5
+
 const markItemsApplied = async (octokit, repo, issueNumber, appliedIds) => {
   const owner = repo.owner.login
   const name = repo.name
-  const { data: issue } = await octokit.rest.issues.get({
-    owner,
-    repo: name,
-    issue_number: issueNumber,
-  })
-  const items = parseAllItems(issue.body)
-  const changes = items.map((i) => ({ id: i.id, summary: i.summary }))
-  const mergedApplied = new Set(items.filter((i) => i.applied).map((i) => i.id))
-  const mergedChecked = new Set()
-  for (const id of appliedIds) mergedApplied.add(id)
-  for (const i of items) {
-    if (i.checked && !mergedApplied.has(i.id)) mergedChecked.add(i.id)
+  const targetIds = [...appliedIds]
+  if (!targetIds.length) return
+  for (let attempt = 0; attempt < MARK_APPLIED_MAX_ATTEMPTS; attempt++) {
+    const { data: issue } = await octokit.rest.issues.get({
+      owner,
+      repo: name,
+      issue_number: issueNumber,
+    })
+    const items = parseAllItems(issue.body)
+    const byId = new Map(items.map((i) => [i.id, i]))
+    const allStruck = targetIds.every((id) => {
+      const item = byId.get(id)
+      return !item || item.applied
+    })
+    if (allStruck) return
+    const changes = items.map((i) => ({ id: i.id, summary: i.summary }))
+    const mergedApplied = new Set(items.filter((i) => i.applied).map((i) => i.id))
+    for (const id of targetIds) mergedApplied.add(id)
+    const mergedChecked = new Set()
+    for (const i of items) {
+      if (i.checked && !mergedApplied.has(i.id)) mergedChecked.add(i.id)
+    }
+    const body = renderPlan(changes, { appliedIds: mergedApplied, checkedIds: mergedChecked })
+    await octokit.rest.issues.update({ owner, repo: name, issue_number: issueNumber, body })
   }
-  const body = renderPlan(changes, { appliedIds: mergedApplied, checkedIds: mergedChecked })
-  await octokit.rest.issues.update({ owner, repo: name, issue_number: issueNumber, body })
 }
 
 const openInvalidConfigIssue = async (octokit, repo, errors) => {
