@@ -31,7 +31,14 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: repomanager-cron
-      Handler: handler.cron
+      Handler: handler.cronDispatcher
+      Timeout: 60
+      Environment:
+        Variables:
+          WORKER_FUNCTION_NAME: !Ref CronWorkerFunction
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CronWorkerFunction
       Events:
         Schedule:
           Type: Schedule
@@ -44,6 +51,20 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/repomanager-cron
+      RetentionInDays: 3
+
+  CronWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: repomanager-cron-worker
+      Handler: handler.cronWorker
+      LoggingConfig:
+        LogGroup: !Ref CronWorkerLogGroup
+
+  CronWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/repomanager-cron-worker
       RetentionInDays: 3
 
   WebhookFunction:

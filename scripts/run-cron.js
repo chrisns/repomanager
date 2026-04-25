@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 require('../handler')
-  .cron()
+  .cronDispatcher()
   .then((result) => {
     console.log(JSON.stringify(result))
     process.exit(0)

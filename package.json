@@ -44,6 +44,7 @@
     "semi": false
   },
   "dependencies": {
+    "@aws-sdk/client-lambda": "^3.1035.0",
     "deepmerge": "^4.3.1",
     "octokit": "^5.0.5",
     "octokit-plugin-create-pull-request": "^6.0.1",

@@ -77,11 +77,13 @@ const processRepo = async (octokit, repo) => {
   return { applied: results.length, pendingConsent: needsConsent.length }
 }
 
-const cron = async () => {
+const cronWorker = async (event) => {
+  const installationId = event && event.installationId
+  if (!installationId) throw new Error('cronWorker: installationId required in event')
   const app = await createApp()
   let processed = 0
   let failed = 0
-  for await (const { octokit, repository } of app.eachRepository.iterator()) {
+  for await (const { octokit, repository } of app.eachRepository.iterator({ installationId })) {
     try {
       await processRepo(octokit, repository)
       processed++
@@ -92,8 +94,52 @@ const cron = async () => {
       )
     }
   }
-  console.info(`repomanager cron complete. processed=${processed} failed=${failed}`)
-  return { processed, failed }
+  console.info(
+    `repomanager worker complete. installationId=${installationId} processed=${processed} failed=${failed}`,
+  )
+  return { installationId, processed, failed }
+}
+
+const invokeWorker = async (functionName, installationId) => {
+  const { LambdaClient, InvokeCommand } = require('@aws-sdk/client-lambda')
+  const client = new LambdaClient({})
+  await client.send(
+    new InvokeCommand({
+      FunctionName: functionName,
+      InvocationType: 'Event',
+      Payload: Buffer.from(JSON.stringify({ installationId })),
+    }),
+  )
+}
+
+const cronDispatcher = async () => {
+  const app = await createApp()
+  const installationIds = []
+  for await (const { installation } of app.eachInstallation.iterator()) {
+    installationIds.push(installation.id)
+  }
+  const workerName = process.env.WORKER_FUNCTION_NAME
+  if (workerName) {
+    await Promise.all(
+      installationIds.map(async (installationId) => {
+        try {
+          await invokeWorker(workerName, installationId)
+        } catch (error) {
+          console.error(`dispatcher: failed to invoke worker for installation ${installationId}: ${error.message}`)
+        }
+      }),
+    )
+  } else {
+    for (const installationId of installationIds) {
+      try {
+        await cronWorker({ installationId })
+      } catch (error) {
+        console.error(`dispatcher: inline worker for installation ${installationId} failed: ${error.message}`)
+      }
+    }
+  }
+  console.info(`repomanager dispatcher complete. dispatched=${installationIds.length}`)
+  return { dispatched: installationIds.length }
 }
 
 const applyConsentedChanges = async (octokit, repo, issue) => {
@@ -182,7 +228,8 @@ const webhook = async (event) => {
 }
 
 module.exports = {
-  cron,
+  cronDispatcher,
+  cronWorker,
   webhook,
   processRepo,
   applyConsentedChanges,

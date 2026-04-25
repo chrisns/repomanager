@@ -1,10 +1,19 @@
 process.env.APP_ID = 'test'
 process.env.CERT = 'test'
 process.env.GITHUB_WEBHOOK_SECRET = 'test'
+delete process.env.WORKER_FUNCTION_NAME
+
+const mockLambdaSend = jest.fn(async () => ({}))
+jest.mock('@aws-sdk/client-lambda', () => ({
+  LambdaClient: jest.fn().mockImplementation(() => ({ send: mockLambdaSend })),
+  InvokeCommand: jest.fn().mockImplementation((input) => ({ input })),
+}))
 
 jest.mock('../src/octokit', () => {
   const state = {
     iteratorRepos: [],
+    reposByInstallation: null,
+    installations: [],
     octokit: null,
     verifyShouldThrow: false,
   }
@@ -24,16 +33,27 @@ jest.mock('../src/octokit', () => {
     },
   }
   const eachRepository = {
-    iterator() {
-      const repos = state.iteratorRepos
+    iterator(opts) {
       const oct = state.octokit
+      const repos =
+        opts && opts.installationId && state.reposByInstallation
+          ? state.reposByInstallation[opts.installationId] || []
+          : state.iteratorRepos
       return (async function* () {
         for (const repository of repos) yield { octokit: oct, repository }
       })()
     },
   }
+  const eachInstallation = {
+    iterator() {
+      const installations = state.installations
+      return (async function* () {
+        for (const installation of installations) yield { installation }
+      })()
+    },
+  }
   return {
-    createApp: jest.fn(async () => ({ webhooks, eachRepository })),
+    createApp: jest.fn(async () => ({ webhooks, eachRepository, eachInstallation })),
     __state: state,
     __webhooks: webhooks,
   }
@@ -44,7 +64,8 @@ const {
   applyConsentedChanges,
   handlePush,
   handleInstallation,
-  cron,
+  cronDispatcher,
+  cronWorker,
   webhook,
 } = require('../handler')
 const mockedOctokitModule = require('../src/octokit')
@@ -144,18 +165,22 @@ describe('applyConsentedChanges', () => {
   })
 })
 
-describe('cron', () => {
-  it('iterates over each repository and processes it', async () => {
+describe('cronWorker', () => {
+  it('iterates repositories for the given installation and processes each', async () => {
     const octokit = createMockOctokit()
     octokit.rest.repos.getContent.mockRejectedValue(
       Object.assign(new Error('nf'), { status: 404 }),
     )
     octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
     mockedOctokitModule.__state.octokit = octokit
-    mockedOctokitModule.__state.iteratorRepos = [makeRepo(), makeRepo({ name: 'two' })]
-    const result = await cron()
+    mockedOctokitModule.__state.reposByInstallation = {
+      42: [makeRepo(), makeRepo({ name: 'two' })],
+      99: [makeRepo({ name: 'other' })],
+    }
+    const result = await cronWorker({ installationId: 42 })
     expect(result.processed).toBe(2)
     expect(result.failed).toBe(0)
+    expect(result.installationId).toBe(42)
     expect(octokit.rest.repos.enableVulnerabilityAlerts).toHaveBeenCalledTimes(2)
   })
 
@@ -163,9 +188,71 @@ describe('cron', () => {
     const octokit = createMockOctokit()
     octokit.rest.repos.getContent.mockRejectedValue(new Error('boom'))
     mockedOctokitModule.__state.octokit = octokit
-    mockedOctokitModule.__state.iteratorRepos = [makeRepo()]
-    const result = await cron()
+    mockedOctokitModule.__state.reposByInstallation = { 1: [makeRepo()] }
+    const result = await cronWorker({ installationId: 1 })
     expect(result.processed + result.failed).toBe(1)
+  })
+
+  it('throws when installationId is missing', async () => {
+    await expect(cronWorker({})).rejects.toThrow(/installationId required/)
+  })
+})
+
+describe('cronDispatcher', () => {
+  beforeEach(() => {
+    mockLambdaSend.mockClear()
+    delete process.env.WORKER_FUNCTION_NAME
+    mockedOctokitModule.__state.reposByInstallation = null
+    mockedOctokitModule.__state.iteratorRepos = []
+  })
+
+  it('inlines the worker per installation when WORKER_FUNCTION_NAME is unset', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.getContent.mockRejectedValue(
+      Object.assign(new Error('nf'), { status: 404 }),
+    )
+    octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
+    mockedOctokitModule.__state.octokit = octokit
+    mockedOctokitModule.__state.installations = [{ id: 42 }, { id: 99 }]
+    mockedOctokitModule.__state.reposByInstallation = {
+      42: [makeRepo()],
+      99: [makeRepo({ name: 'other' }), makeRepo({ name: 'third' })],
+    }
+    const result = await cronDispatcher()
+    expect(result.dispatched).toBe(2)
+    expect(octokit.rest.repos.enableVulnerabilityAlerts).toHaveBeenCalledTimes(3)
+    expect(mockLambdaSend).not.toHaveBeenCalled()
+  })
+
+  it('async-invokes the worker lambda per installation when WORKER_FUNCTION_NAME is set', async () => {
+    process.env.WORKER_FUNCTION_NAME = 'repomanager-cron-worker'
+    mockedOctokitModule.__state.installations = [{ id: 42 }, { id: 99 }]
+    const octokit = createMockOctokit()
+    mockedOctokitModule.__state.octokit = octokit
+
+    const result = await cronDispatcher()
+    expect(result.dispatched).toBe(2)
+    expect(mockLambdaSend).toHaveBeenCalledTimes(2)
+    const sentPayloads = mockLambdaSend.mock.calls.map((c) =>
+      JSON.parse(Buffer.from(c[0].input.Payload).toString('utf8')),
+    )
+    expect(sentPayloads).toEqual(
+      expect.arrayContaining([{ installationId: 42 }, { installationId: 99 }]),
+    )
+    expect(mockLambdaSend.mock.calls[0][0].input.FunctionName).toBe('repomanager-cron-worker')
+    expect(mockLambdaSend.mock.calls[0][0].input.InvocationType).toBe('Event')
+    // Should not have processed repos locally.
+    expect(octokit.rest.repos.enableVulnerabilityAlerts).not.toHaveBeenCalled()
+  })
+
+  it('logs and continues when a worker invoke fails', async () => {
+    process.env.WORKER_FUNCTION_NAME = 'repomanager-cron-worker'
+    mockedOctokitModule.__state.installations = [{ id: 42 }, { id: 99 }]
+    mockLambdaSend.mockImplementationOnce(() => Promise.reject(new Error('throttled')))
+    mockLambdaSend.mockImplementationOnce(() => Promise.resolve({}))
+    const result = await cronDispatcher()
+    expect(result.dispatched).toBe(2)
+    expect(mockLambdaSend).toHaveBeenCalledTimes(2)
   })
 })
 
