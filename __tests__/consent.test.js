@@ -125,12 +125,21 @@ describe('upsertConsentIssue', () => {
   it('closes the issue when no changes remain', async () => {
     const octokit = createMockOctokit()
     octokit.rest.issues.listForRepo.mockResolvedValue({
-      data: [{ number: 5, title: ISSUE_TITLE, body: 'old' }],
+      data: [{ number: 5, title: ISSUE_TITLE, state: 'open', body: 'old' }],
     })
     await upsertConsentIssue(octokit, makeRepo(), [])
     expect(octokit.rest.issues.update).toHaveBeenCalledWith(
       expect.objectContaining({ issue_number: 5, state: 'closed' }),
     )
+  })
+
+  it('does not re-close an already closed issue when no changes remain', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.issues.listForRepo.mockResolvedValue({
+      data: [{ number: 5, title: ISSUE_TITLE, state: 'closed', body: 'old' }],
+    })
+    await upsertConsentIssue(octokit, makeRepo(), [])
+    expect(octokit.rest.issues.update).not.toHaveBeenCalled()
   })
 
   it('does not create a new issue when there are no changes', async () => {
@@ -203,6 +212,102 @@ describe('markItemsApplied concurrent writers', () => {
     })
     await markItemsApplied(octokit, makeRepo(), 1, new Set(['a']))
     expect(octokit.rest.issues.update).not.toHaveBeenCalled()
+  })
+})
+
+describe('markItemsApplied auto-close', () => {
+  it('closes the issue once every item is applied', async () => {
+    let body = [
+      `- [x] <!-- repomanager:${encodeId('a')} --> ~~A~~`,
+      `- [x] <!-- repomanager:${encodeId('b')} --> B`,
+    ].join('\n')
+    const octokit = createMockOctokit()
+    octokit.rest.issues.get = jest.fn(async () => ({
+      data: { number: 7, state: 'open', body },
+    }))
+    octokit.rest.issues.update = jest.fn(async (args) => {
+      if (args.body) body = args.body
+      return { data: {} }
+    })
+    await markItemsApplied(octokit, makeRepo(), 7, new Set(['b']))
+    const closeCall = octokit.rest.issues.update.mock.calls.find(
+      (c) => c[0].state === 'closed',
+    )
+    expect(closeCall).toBeTruthy()
+    expect(closeCall[0].state_reason).toBe('completed')
+  })
+
+  it('does not close when items still remain unapplied', async () => {
+    let body = [
+      `- [ ] <!-- repomanager:${encodeId('a')} --> A`,
+      `- [x] <!-- repomanager:${encodeId('b')} --> B`,
+    ].join('\n')
+    const octokit = createMockOctokit()
+    octokit.rest.issues.get = jest.fn(async () => ({
+      data: { number: 7, state: 'open', body },
+    }))
+    octokit.rest.issues.update = jest.fn(async (args) => {
+      if (args.body) body = args.body
+      return { data: {} }
+    })
+    await markItemsApplied(octokit, makeRepo(), 7, new Set(['b']))
+    const closeCall = octokit.rest.issues.update.mock.calls.find(
+      (c) => c[0].state === 'closed',
+    )
+    expect(closeCall).toBeFalsy()
+  })
+})
+
+describe('upsertConsentIssue close + reopen', () => {
+  it('closes an open issue when every change is already applied', async () => {
+    const octokit = createMockOctokit()
+    const existingBody = [
+      `- [x] <!-- repomanager:${encodeId('files:pr')} --> ~~Open templated PR~~`,
+      `- [x] <!-- repomanager:${encodeId('bp:main')} --> ~~Apply BP~~`,
+    ].join('\n')
+    octokit.rest.issues.listForRepo.mockResolvedValue({
+      data: [{ number: 9, title: ISSUE_TITLE, state: 'open', body: existingBody }],
+    })
+    await upsertConsentIssue(octokit, makeRepo(), [
+      { id: 'files:pr', kind: 'files', summary: 'Open templated PR' },
+      { id: 'bp:main', kind: 'branchProtection', summary: 'Apply BP' },
+    ])
+    const call = octokit.rest.issues.update.mock.calls.find((c) => c[0].issue_number === 9)
+    expect(call[0].state).toBe('closed')
+    expect(call[0].state_reason).toBe('completed')
+  })
+
+  it('reopens a closed issue when drift introduces an unapplied change', async () => {
+    const octokit = createMockOctokit()
+    const existingBody = [
+      `- [x] <!-- repomanager:${encodeId('files:pr')} --> ~~Open templated PR~~`,
+    ].join('\n')
+    octokit.rest.issues.listForRepo.mockResolvedValue({
+      data: [{ number: 9, title: ISSUE_TITLE, state: 'closed', body: existingBody }],
+    })
+    await upsertConsentIssue(octokit, makeRepo(), [
+      { id: 'files:pr', kind: 'files', summary: 'Open templated PR' },
+      { id: 'bp:main', kind: 'branchProtection', summary: 'Apply BP' },
+    ])
+    const call = octokit.rest.issues.update.mock.calls.find((c) => c[0].issue_number === 9)
+    expect(call[0].state).toBe('open')
+    expect(call[0].state_reason).toBe('reopened')
+  })
+
+  it('leaves a closed issue closed when all current changes are already applied', async () => {
+    const octokit = createMockOctokit()
+    const existingBody = [
+      `- [x] <!-- repomanager:${encodeId('files:pr')} --> ~~Open templated PR~~`,
+    ].join('\n')
+    octokit.rest.issues.listForRepo.mockResolvedValue({
+      data: [{ number: 9, title: ISSUE_TITLE, state: 'closed', body: existingBody }],
+    })
+    await upsertConsentIssue(octokit, makeRepo(), [
+      { id: 'files:pr', kind: 'files', summary: 'Open templated PR' },
+    ])
+    expect(
+      octokit.rest.issues.update.mock.calls.find((c) => c[0].issue_number === 9),
+    ).toBeFalsy()
   })
 })
 

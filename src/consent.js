@@ -123,6 +123,24 @@ const findOpenIssueByLabel = async (octokit, owner, repo, label, title) => {
   }
 }
 
+const findIssueByLabelAnyState = async (octokit, owner, repo, label, title) => {
+  try {
+    const { data } = await octokit.rest.issues.listForRepo({
+      owner,
+      repo,
+      state: 'all',
+      labels: label,
+      per_page: 100,
+      sort: 'updated',
+      direction: 'desc',
+    })
+    return data.find((issue) => issue.title === title) || null
+  } catch (error) {
+    if (error.status === 404) return null
+    throw error
+  }
+}
+
 const upsertConsentIssue = async (octokit, repo, changes) => {
   const owner = repo.owner.login
   const name = repo.name
@@ -134,7 +152,7 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
     '0e8a16',
     'repomanager: pending config changes awaiting approval',
   )
-  const existing = await findOpenIssueByLabel(octokit, owner, name, CONSENT_LABEL, ISSUE_TITLE)
+  const existing = await findIssueByLabelAnyState(octokit, owner, name, CONSENT_LABEL, ISSUE_TITLE)
 
   if (!existing) {
     if (!changes.length) return null
@@ -149,13 +167,15 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
   }
 
   if (!changes.length) {
-    await octokit.rest.issues.update({
-      owner,
-      repo: name,
-      issue_number: existing.number,
-      state: 'closed',
-      state_reason: 'completed',
-    })
+    if (existing.state === 'open') {
+      await octokit.rest.issues.update({
+        owner,
+        repo: name,
+        issue_number: existing.number,
+        state: 'closed',
+        state_reason: 'completed',
+      })
+    }
     return existing
   }
 
@@ -165,19 +185,34 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
   const previous = new Map(parseAllItems(existing.body).map((i) => [i.id, i]))
   const checkedIds = new Set()
   const appliedIds = new Set()
+  let hasUnapplied = false
   for (const c of changes) {
     const prev = previous.get(c.id)
-    if (!prev) continue
-    if (prev.applied) appliedIds.add(c.id)
-    else if (prev.checked) checkedIds.add(c.id)
+    if (prev && prev.applied) {
+      appliedIds.add(c.id)
+      continue
+    }
+    hasUnapplied = true
+    if (prev && prev.checked) checkedIds.add(c.id)
   }
 
-  await octokit.rest.issues.update({
-    owner,
-    repo: name,
-    issue_number: existing.number,
-    body: renderPlan(changes, { appliedIds, checkedIds }),
-  })
+  const body = renderPlan(changes, { appliedIds, checkedIds })
+  const update = { owner, repo: name, issue_number: existing.number, body }
+
+  if (existing.state === 'open' && !hasUnapplied) {
+    // Drift plan is fully resolved — close it out.
+    update.state = 'closed'
+    update.state_reason = 'completed'
+  } else if (existing.state === 'closed' && hasUnapplied) {
+    // Drift has reoccurred (new id or an item was never applied) — reopen.
+    update.state = 'open'
+    update.state_reason = 'reopened'
+  } else if (existing.state === 'closed' && !hasUnapplied) {
+    // All current changes already applied in the closed issue — leave it.
+    return existing
+  }
+
+  await octokit.rest.issues.update(update)
   return existing
 }
 
@@ -207,7 +242,24 @@ const markItemsApplied = async (octokit, repo, issueNumber, appliedIds) => {
       const item = byId.get(id)
       return !item || item.applied
     })
-    if (allStruck) return
+    if (allStruck) {
+      // Our own writes have landed. If every checkbox is now applied, the
+      // consent issue is fully resolved — close it.
+      if (
+        issue.state === 'open' &&
+        items.length &&
+        items.every((i) => i.applied)
+      ) {
+        await octokit.rest.issues.update({
+          owner,
+          repo: name,
+          issue_number: issueNumber,
+          state: 'closed',
+          state_reason: 'completed',
+        })
+      }
+      return
+    }
     const changes = items.map((i) => ({ id: i.id, summary: i.summary }))
     const mergedApplied = new Set(items.filter((i) => i.applied).map((i) => i.id))
     for (const id of targetIds) mergedApplied.add(id)
