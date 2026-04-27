@@ -23,6 +23,60 @@ const expandAllContexts = async (octokit, owner, repo, branch) => {
   }
 }
 
+const fetchExistingBranchProtection = async (octokit, owner, repo, branch) => {
+  try {
+    const { data } = await octokit.rest.repos.getBranchProtection({ owner, repo, branch })
+    return data
+  } catch (error) {
+    if (error.status === 404) return null
+    throw error
+  }
+}
+
+// GitHub returns branch-protection state under nested objects with keys like
+// `enabled` / `users` / `teams` / `apps` that we never declared. Compare the
+// fields we care about by name, with subset semantics: every value we asked
+// for must already be set on the server. Anything extra the server keeps is
+// fine.
+const branchProtectionMatches = (existing, desired) => {
+  if (!existing) return false
+  const required = desired.required_status_checks
+  const got = existing.required_status_checks
+  if (required) {
+    if (!got) return false
+    if (required.strict !== undefined && got.strict !== required.strict) return false
+    if (Array.isArray(required.contexts)) {
+      const gotContexts = Array.isArray(got.contexts)
+        ? got.contexts
+        : (got.checks || []).map((c) => c.context)
+      const expected = [...required.contexts].sort()
+      const actual = [...new Set(gotContexts)].sort()
+      if (expected.length !== actual.length) return false
+      if (!expected.every((c, i) => c === actual[i])) return false
+    }
+  }
+  if (
+    desired.required_linear_history !== undefined &&
+    !!(existing.required_linear_history && existing.required_linear_history.enabled) !==
+      !!desired.required_linear_history
+  )
+    return false
+  if (
+    desired.enforce_admins !== undefined &&
+    !!(existing.enforce_admins && existing.enforce_admins.enabled) !== !!desired.enforce_admins
+  )
+    return false
+  // restrictions: null in our config means "no restrictions"; GitHub omits
+  // the key entirely when none are set.
+  if (desired.restrictions === null && existing.restrictions) return false
+  // required_pull_request_reviews: null in our config means "do not require
+  // PR reviews via the legacy branch-protection API"; we leave that to
+  // rulesets. GitHub omits the key when unset.
+  if (desired.required_pull_request_reviews === null && existing.required_pull_request_reviews)
+    return false
+  return true
+}
+
 const planBranchProtection = async (octokit, repo, desired) => {
   const changes = []
   for (const bp of desired) {
@@ -35,6 +89,13 @@ const planBranchProtection = async (octokit, repo, desired) => {
         contexts: await expandAllContexts(octokit, repo.owner.login, repo.name, branch),
       }
     }
+    const existing = await fetchExistingBranchProtection(
+      octokit,
+      repo.owner.login,
+      repo.name,
+      branch,
+    )
+    if (branchProtectionMatches(existing, config)) continue
     changes.push({
       kind: 'branchProtection',
       id: `bp:${branch}`,
@@ -160,8 +221,29 @@ const planSimpleFlag = (key, desired, summary) =>
         },
       ]
 
-const planRepoUpdate = (desired) => {
+const fetchRepoSettings = async (octokit, owner, repo) => {
+  try {
+    const { data } = await octokit.rest.repos.get({ owner, repo })
+    return data
+  } catch (error) {
+    if (error.status === 404) return null
+    throw error
+  }
+}
+
+const repoSettingsMatch = (actual, desiredRepo) => {
+  if (!actual) return false
+  return Object.entries(desiredRepo).every(([k, v]) => actual[k] === v)
+}
+
+const planRepoUpdate = async (octokit, repo, desired) => {
   if (!desired.repo || Object.keys(desired.repo).length === 0) return []
+  // The repo object passed in (from eachRepository) often lacks merge-method
+  // toggles (allow_squash_merge etc.), so fetch the full record. If the GET
+  // fails, fall back to assuming drift — better to propose a no-op apply
+  // than silently miss real drift.
+  const actual = await fetchRepoSettings(octokit, repo.owner.login, repo.name)
+  if (repoSettingsMatch(actual, desired.repo)) return []
   return [
     {
       kind: 'repo',
@@ -188,11 +270,43 @@ const resolveFileVisibility = (filesConfig, repoVisibility) => {
   return Object.keys(resolved).length ? resolved : null
 }
 
-const planFiles = (desired, repo) => {
+const fetchFileContent = async (octokit, owner, repo, path, ref) => {
+  try {
+    const { data } = await octokit.rest.repos.getContent({ owner, repo, path, ref })
+    if (Array.isArray(data) || data.type !== 'file') return null
+    if (typeof data.content !== 'string') return null
+    return Buffer.from(data.content, 'base64').toString('utf8')
+  } catch (error) {
+    if (error.status === 404) return null
+    throw error
+  }
+}
+
+const planFiles = async (octokit, repo, desired) => {
   if (!desired.files || desired.files === false) return []
   const visibility = repo.private ? 'private' : repo.visibility || 'public'
   const filtered = resolveFileVisibility(desired.files, visibility)
   if (!filtered) return []
+  const ref = repo.default_branch
+  // Compare each desired file against what's on the default branch. Drift if
+  // any file is missing or differs. Don't block creation of the consent
+  // change on a single file fetch failing — fail open by treating an unknown
+  // path as drift, otherwise we silently miss real templated-file rot.
+  let drift = false
+  for (const [path, content] of Object.entries(filtered)) {
+    let actual
+    try {
+      actual = await fetchFileContent(octokit, repo.owner.login, repo.name, path, ref)
+    } catch {
+      drift = true
+      break
+    }
+    if (actual === null || actual !== content) {
+      drift = true
+      break
+    }
+  }
+  if (!drift) return []
   const names = Object.keys(filtered)
   return [
     {
@@ -246,8 +360,8 @@ const planRepo = async (octokit, repo, desired) => {
   if (desired.rulesets) {
     changes.push(...(await planRulesets(octokit, repo, desired.rulesets)))
   }
-  changes.push(...planRepoUpdate(desired))
-  changes.push(...planFiles(desired, repo))
+  changes.push(...(await planRepoUpdate(octokit, repo, desired)))
+  changes.push(...(await planFiles(octokit, repo, desired)))
 
   return changes
 }

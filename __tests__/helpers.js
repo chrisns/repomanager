@@ -28,7 +28,25 @@ const createMockOctokit = () => {
         disableAutomatedSecurityFixes: record('repos.disableAutomatedSecurityFixes'),
         updateBranchProtection: record('repos.updateBranchProtection'),
         update: record('repos.update'),
-        getContent: jest.fn(async () => ({ data: { content: '' } })),
+        // Default to "drift everywhere": planRepoUpdate / planFiles /
+        // planBranchProtection treat fetch failures and missing data as
+        // drift, so existing tests that don't care about the diff path keep
+        // exercising the change-emitting branch they always have.
+        get: jest.fn(async () => {
+          const err = new Error('Not Found')
+          err.status = 404
+          throw err
+        }),
+        getContent: jest.fn(async () => {
+          const err = new Error('Not Found')
+          err.status = 404
+          throw err
+        }),
+        getBranchProtection: jest.fn(async () => {
+          const err = new Error('Not Found')
+          err.status = 404
+          throw err
+        }),
         getRepoRulesets: record('repos.getRepoRulesets'),
         getRepoRuleset: record('repos.getRepoRuleset'),
         createRepoRuleset: record('repos.createRepoRuleset'),

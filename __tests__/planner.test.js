@@ -276,6 +276,207 @@ describe('planRepo files visibility', () => {
   })
 })
 
+describe('planRepo drift detection', () => {
+  describe('branch protection', () => {
+    it('emits no change when existing protection already matches', async () => {
+      const octokit = createMockOctokit()
+      octokit.rest.repos.getBranchProtection.mockResolvedValue({
+        data: {
+          required_status_checks: { strict: false, contexts: ['ci'] },
+          required_linear_history: { enabled: true },
+          enforce_admins: { enabled: false },
+        },
+      })
+      const changes = await planRepo(octokit, makeRepo(), {
+        branchProtection: [
+          {
+            branch: '__DEFAULT_BRANCH__',
+            required_status_checks: { strict: false, contexts: ['ci'] },
+            required_linear_history: true,
+            enforce_admins: false,
+            restrictions: null,
+            required_pull_request_reviews: null,
+          },
+        ],
+      })
+      expect(changes.filter((c) => c.kind === 'branchProtection')).toEqual([])
+    })
+
+    it('emits a change when no protection exists yet', async () => {
+      const octokit = createMockOctokit()
+      const changes = await planRepo(octokit, makeRepo(), {
+        branchProtection: [
+          {
+            branch: '__DEFAULT_BRANCH__',
+            required_status_checks: { strict: false, contexts: ['ci'] },
+            required_linear_history: true,
+          },
+        ],
+      })
+      expect(changes.find((c) => c.kind === 'branchProtection')).toBeTruthy()
+    })
+
+    it('emits a change when contexts drift', async () => {
+      const octokit = createMockOctokit()
+      octokit.rest.repos.getBranchProtection.mockResolvedValue({
+        data: {
+          required_status_checks: { strict: false, contexts: ['ci', 'lint'] },
+          required_linear_history: { enabled: true },
+        },
+      })
+      const changes = await planRepo(octokit, makeRepo(), {
+        branchProtection: [
+          {
+            branch: '__DEFAULT_BRANCH__',
+            required_status_checks: { strict: false, contexts: ['ci'] },
+            required_linear_history: true,
+          },
+        ],
+      })
+      expect(changes.find((c) => c.kind === 'branchProtection')).toBeTruthy()
+    })
+
+    it('treats checks-style contexts (post-deprecation shape) as a match', async () => {
+      const octokit = createMockOctokit()
+      octokit.rest.repos.getBranchProtection.mockResolvedValue({
+        data: {
+          required_status_checks: {
+            strict: false,
+            checks: [{ context: 'ci' }, { context: 'lint' }],
+          },
+          required_linear_history: { enabled: true },
+        },
+      })
+      const changes = await planRepo(octokit, makeRepo(), {
+        branchProtection: [
+          {
+            branch: '__DEFAULT_BRANCH__',
+            required_status_checks: { strict: false, contexts: ['ci', 'lint'] },
+            required_linear_history: true,
+          },
+        ],
+      })
+      expect(changes.filter((c) => c.kind === 'branchProtection')).toEqual([])
+    })
+  })
+
+  describe('repo settings', () => {
+    it('emits no change when actual repo settings already match', async () => {
+      const octokit = createMockOctokit()
+      octokit.rest.repos.get.mockResolvedValue({
+        data: {
+          has_wiki: false,
+          allow_squash_merge: true,
+          delete_branch_on_merge: true,
+          allow_auto_merge: true,
+        },
+      })
+      const changes = await planRepo(octokit, makeRepo(), {
+        repo: {
+          has_wiki: false,
+          allow_squash_merge: true,
+          delete_branch_on_merge: true,
+          allow_auto_merge: true,
+        },
+      })
+      expect(changes.filter((c) => c.kind === 'repo')).toEqual([])
+    })
+
+    it('emits a change when any desired key drifts', async () => {
+      const octokit = createMockOctokit()
+      octokit.rest.repos.get.mockResolvedValue({
+        data: { has_wiki: true, allow_squash_merge: true },
+      })
+      const changes = await planRepo(octokit, makeRepo(), {
+        repo: { has_wiki: false, allow_squash_merge: true },
+      })
+      expect(changes.find((c) => c.kind === 'repo')).toBeTruthy()
+    })
+
+    it('ignores extra keys on the actual repo (subset semantics)', async () => {
+      const octokit = createMockOctokit()
+      octokit.rest.repos.get.mockResolvedValue({
+        data: {
+          has_wiki: false,
+          allow_squash_merge: true,
+          // server-side extras we never declared
+          security_and_analysis: { secret_scanning: { status: 'enabled' } },
+          topics: ['foo'],
+        },
+      })
+      const changes = await planRepo(octokit, makeRepo(), {
+        repo: { has_wiki: false, allow_squash_merge: true },
+      })
+      expect(changes.filter((c) => c.kind === 'repo')).toEqual([])
+    })
+
+    it('emits drift when the GET fails (fail-open)', async () => {
+      const octokit = createMockOctokit()
+      // default mock rejects with 404
+      const changes = await planRepo(octokit, makeRepo(), {
+        repo: { has_wiki: false },
+      })
+      expect(changes.find((c) => c.kind === 'repo')).toBeTruthy()
+    })
+  })
+
+  describe('templated files', () => {
+    it('emits no change when every desired file matches what is in the repo', async () => {
+      const octokit = createMockOctokit()
+      const desired = {
+        'LICENSE': 'MIT body\n',
+        'SECURITY.md': 'sec\n',
+      }
+      octokit.rest.repos.getContent.mockImplementation(async ({ path }) => ({
+        data: {
+          type: 'file',
+          content: Buffer.from(desired[path], 'utf8').toString('base64'),
+        },
+      }))
+      const changes = await planRepo(octokit, makeRepo(), { files: desired })
+      expect(changes.filter((c) => c.kind === 'files')).toEqual([])
+    })
+
+    it('emits a change when one file is missing', async () => {
+      const octokit = createMockOctokit()
+      octokit.rest.repos.getContent.mockImplementation(async ({ path }) => {
+        if (path === 'SECURITY.md') {
+          const err = new Error('Not Found')
+          err.status = 404
+          throw err
+        }
+        return {
+          data: {
+            type: 'file',
+            content: Buffer.from('MIT body\n', 'utf8').toString('base64'),
+          },
+        }
+      })
+      const changes = await planRepo(octokit, makeRepo(), {
+        files: {
+          'LICENSE': 'MIT body\n',
+          'SECURITY.md': 'sec\n',
+        },
+      })
+      expect(changes.find((c) => c.kind === 'files')).toBeTruthy()
+    })
+
+    it('emits a change when content differs', async () => {
+      const octokit = createMockOctokit()
+      octokit.rest.repos.getContent.mockResolvedValue({
+        data: {
+          type: 'file',
+          content: Buffer.from('OLD', 'utf8').toString('base64'),
+        },
+      })
+      const changes = await planRepo(octokit, makeRepo(), {
+        files: { 'LICENSE': 'NEW' },
+      })
+      expect(changes.find((c) => c.kind === 'files')).toBeTruthy()
+    })
+  })
+})
+
 describe('splitByRisk', () => {
   it('routes low-risk flags to autoApply and others to needsConsent', () => {
     const changes = [
