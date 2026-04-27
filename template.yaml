@@ -11,6 +11,13 @@ Parameters:
   Cert:
     Type: String
     NoEcho: true
+  ReadOnly:
+    Type: String
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+    Description: Kill switch — when 'true' the bot plans and logs but performs no GitHub writes.
 
 Globals:
   Function:
@@ -24,6 +31,7 @@ Globals:
         APP_ID: !Ref AppId
         GITHUB_WEBHOOK_SECRET: !Ref GitHubWebhookSecret
         CERT: !Ref Cert
+        READ_ONLY: !Ref ReadOnly
         NODE_OPTIONS: --enable-source-maps
 
 Resources:

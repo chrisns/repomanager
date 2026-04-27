@@ -15,18 +15,43 @@ const {
 
 const isDryRun = () => process.env.DRY_RUN === 'true'
 
+// READ_ONLY is a hard kill switch: plan, log what we would have done, and
+// stop. No GitHub writes — no consent issues opened or edited, no settings
+// applied, no PRs created. Set on the deployed Lambda when something is
+// going wrong and we want to keep the cron paused while we debug.
+const isReadOnly = () => process.env.READ_ONLY === 'true'
+
 const shouldProcessRepo = (repo) => !repo.fork && !repo.disabled && !repo.archived
 
 const processRepo = async (octokit, repo) => {
   if (!shouldProcessRepo(repo)) return { skipped: true, reason: 'filtered' }
 
   const { config, errors } = await getRepoConfig(repo.name, repo.owner.login, octokit)
+  const slug = `${repo.owner.login}/${repo.name}`
+  if (isReadOnly()) {
+    if (errors) {
+      console.info(`[read-only] ${slug}: invalid repo-config.yml — would open invalid-config issue`)
+      return { skipped: true, reason: 'read-only-invalid' }
+    }
+    try {
+      const changes = await planRepo(octokit, repo, config)
+      if (!changes.length) {
+        console.info(`[read-only] ${slug}: no drift`)
+      } else {
+        const ids = changes.map((c) => c.id).join(', ')
+        console.info(`[read-only] ${slug}: ${changes.length} change(s) planned — ${ids}`)
+      }
+    } catch (error) {
+      console.error(`[read-only] ${slug}: planRepo failed: ${error.message}`)
+    }
+    return { readOnly: true }
+  }
   if (errors) {
-    console.warn(`${repo.owner.login}/${repo.name}: invalid repo-config.yml`)
+    console.warn(`${slug}: invalid repo-config.yml`)
     try {
       await openInvalidConfigIssue(octokit, repo, errors)
     } catch (error) {
-      console.error(`${repo.owner.login}/${repo.name}: failed to open invalid-config issue: ${error.message}`)
+      console.error(`${slug}: failed to open invalid-config issue: ${error.message}`)
     }
     return { skipped: true, reason: 'invalid-config' }
   }
@@ -154,9 +179,17 @@ const applyConsentedChanges = async (octokit, repo, issue) => {
   )
   if (!targetIds.size) return { applied: 0 }
 
+  const slug = `${repo.owner.login}/${repo.name}`
+  if (isReadOnly()) {
+    console.info(
+      `[read-only] ${slug}#${issue.number}: would apply ${[...targetIds].join(', ')}`,
+    )
+    return { readOnly: true }
+  }
+
   const { config, errors } = await getRepoConfig(repo.name, repo.owner.login, octokit)
   if (errors) {
-    console.warn(`${repo.owner.login}/${repo.name}: cannot apply consent (invalid config)`)
+    console.warn(`${slug}: cannot apply consent (invalid config)`)
     return { applied: 0 }
   }
   const changes = await planRepo(octokit, repo, config)

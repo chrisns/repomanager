@@ -91,6 +91,7 @@ jobs:
             --parameter-overrides \
               AppId=${{ secrets.APP_ID }} \
               GitHubWebhookSecret=${{ secrets.WEBHOOK_SECRET }} \
-              "Cert=$CERT_B64"
+              "Cert=$CERT_B64" \
+              ReadOnly=true
         env:
           CERT: ${{ secrets.CERT }}
