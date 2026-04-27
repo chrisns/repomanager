@@ -139,37 +139,97 @@ const ensureLabel = async (octokit, owner, repo, name, color, description) => {
   }
 }
 
-const findOpenIssueByLabel = async (octokit, owner, repo, label, title) => {
-  try {
-    const { data } = await octokit.rest.issues.listForRepo({
-      owner,
-      repo,
-      state: 'open',
-      labels: label,
-      per_page: 50,
-    })
-    return data.find((issue) => issue.title === title) || null
-  } catch (error) {
-    if (error.status === 404) return null
-    throw error
+// GitHub's `GET /repos/{owner}/{repo}/issues` endpoint has been observed to
+// serve stale or empty cached responses even when matching issues exist —
+// every call below is unioned to maximise the chance of finding the canonical
+// issue. Without this, a single missed read causes us to create a duplicate
+// consent issue on every cron tick.
+const collectIssuesByLabel = async (octokit, owner, repo, label, title) => {
+  const byNumber = new Map()
+  const ingest = (arr) => {
+    if (!Array.isArray(arr)) return
+    for (const issue of arr) {
+      if (!issue || issue.title !== title) continue
+      // Search returns PRs too; consent issues are never PRs.
+      if (issue.pull_request) continue
+      if (!byNumber.has(issue.number)) byNumber.set(issue.number, issue)
+    }
   }
+
+  try {
+    const { data } = await octokit.rest.search.issuesAndPullRequests({
+      q: `repo:${owner}/${repo} is:issue label:"${label}"`,
+      per_page: 100,
+    })
+    ingest(data && data.items)
+  } catch (error) {
+    if (error.status !== 404 && error.status !== 422) throw error
+  }
+
+  for (const state of ['open', 'closed']) {
+    try {
+      const { data } = await octokit.rest.issues.listForRepo({
+        owner,
+        repo,
+        state,
+        labels: label,
+        per_page: 100,
+        sort: 'updated',
+        direction: 'desc',
+      })
+      ingest(data)
+    } catch (error) {
+      if (error.status !== 404) throw error
+    }
+  }
+
+  return [...byNumber.values()]
+}
+
+// When more than one issue matches, prefer an open one, then the lowest issue
+// number (the original — duplicates we created later get closed below).
+const pickCanonicalIssue = (issues) => {
+  if (!issues.length) return null
+  const sorted = [...issues].sort((a, b) => {
+    if (a.state !== b.state) return a.state === 'open' ? -1 : 1
+    return a.number - b.number
+  })
+  return sorted[0]
+}
+
+const findOpenIssueByLabel = async (octokit, owner, repo, label, title) => {
+  const all = await collectIssuesByLabel(octokit, owner, repo, label, title)
+  const open = all.filter((i) => i.state === 'open')
+  return pickCanonicalIssue(open)
 }
 
 const findIssueByLabelAnyState = async (octokit, owner, repo, label, title) => {
-  try {
-    const { data } = await octokit.rest.issues.listForRepo({
-      owner,
-      repo,
-      state: 'all',
-      labels: label,
-      per_page: 100,
-      sort: 'updated',
-      direction: 'desc',
-    })
-    return data.find((issue) => issue.title === title) || null
-  } catch (error) {
-    if (error.status === 404) return null
-    throw error
+  const all = await collectIssuesByLabel(octokit, owner, repo, label, title)
+  return pickCanonicalIssue(all)
+}
+
+// Close every open issue with the given label/title except `keepNumber`.
+// Used after we create a new issue to clean up duplicates that a stale read
+// caused us to miss — and any duplicates a concurrent run created. Keeping
+// the lowest issue number is deterministic, so concurrent runs converge on
+// the same survivor.
+const closeDuplicateIssues = async (octokit, owner, repo, label, title, keepNumber) => {
+  const all = await collectIssuesByLabel(octokit, owner, repo, label, title)
+  const dups = all.filter(
+    (i) => i.number !== keepNumber && i.state === 'open',
+  )
+  for (const dup of dups) {
+    try {
+      await octokit.rest.issues.update({
+        owner,
+        repo,
+        issue_number: dup.number,
+        state: 'closed',
+        state_reason: 'not_planned',
+      })
+    } catch (error) {
+      if (error.status !== 404 && error.status !== 410) throw error
+    }
   }
 }
 
@@ -195,6 +255,30 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
       body: renderPlan(changes),
       labels: [CONSENT_LABEL],
     })
+    // Belt-and-braces: a stale read from the issues index may have hidden
+    // an existing issue, or a concurrent run may have created one alongside
+    // ours. Re-query and close any open duplicates, keeping the
+    // lowest-numbered survivor (deterministic across concurrent runs).
+    const allNow = await collectIssuesByLabel(
+      octokit,
+      owner,
+      name,
+      CONSENT_LABEL,
+      ISSUE_TITLE,
+    )
+    const openIssues = allNow.filter((i) => i.state === 'open')
+    if (openIssues.length > 1) {
+      const winner = pickCanonicalIssue(openIssues)
+      await closeDuplicateIssues(
+        octokit,
+        owner,
+        name,
+        CONSENT_LABEL,
+        ISSUE_TITLE,
+        winner.number,
+      )
+      return winner
+    }
     return data
   }
 

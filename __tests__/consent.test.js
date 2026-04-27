@@ -160,6 +160,50 @@ describe('upsertConsentIssue', () => {
     expect(result).toBeNull()
     expect(octokit.rest.issues.create).not.toHaveBeenCalled()
   })
+
+  it('reuses an existing issue surfaced only by the search index', async () => {
+    const octokit = createMockOctokit()
+    // listForRepo serves a stale empty response (the bug we're guarding
+    // against). The search API still has the issue, so we must not create.
+    octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
+    octokit.rest.search.issuesAndPullRequests.mockResolvedValue({
+      data: {
+        items: [{ number: 7, title: ISSUE_TITLE, state: 'open', body: 'old' }],
+      },
+    })
+    await upsertConsentIssue(octokit, makeRepo(), [
+      { id: 'bp:main', kind: 'branchProtection', summary: 'bp' },
+    ])
+    expect(octokit.rest.issues.create).not.toHaveBeenCalled()
+    expect(octokit.rest.issues.update).toHaveBeenCalledWith(
+      expect.objectContaining({ issue_number: 7 }),
+    )
+  })
+
+  it('closes a duplicate consent issue created racily alongside ours', async () => {
+    const octokit = createMockOctokit()
+    // First lookup: empty (stale read). After we create, a follow-up lookup
+    // surfaces both ours and an older duplicate from a parallel run.
+    octokit.rest.issues.listForRepo.mockResolvedValueOnce({ data: [] })
+    octokit.rest.issues.listForRepo.mockResolvedValueOnce({ data: [] })
+    octokit.rest.issues.listForRepo.mockResolvedValue({
+      data: [
+        { number: 42, title: ISSUE_TITLE, state: 'open' },
+        { number: 5, title: ISSUE_TITLE, state: 'open' },
+      ],
+    })
+    octokit.rest.issues.create.mockResolvedValue({
+      data: { number: 42, title: ISSUE_TITLE, state: 'open' },
+    })
+    const winner = await upsertConsentIssue(octokit, makeRepo(), [
+      { id: 'bp:main', kind: 'branchProtection', summary: 'bp' },
+    ])
+    expect(winner.number).toBe(5)
+    // The duplicate (the higher-numbered one we just created) gets closed.
+    expect(octokit.rest.issues.update).toHaveBeenCalledWith(
+      expect.objectContaining({ issue_number: 42, state: 'closed' }),
+    )
+  })
 })
 
 describe('markItemsApplied', () => {
@@ -473,7 +517,7 @@ describe('invalid config issues', () => {
   it('closes existing invalid-config issue when config is now valid', async () => {
     const octokit = createMockOctokit()
     octokit.rest.issues.listForRepo.mockResolvedValue({
-      data: [{ number: 11, title: INVALID_TITLE }],
+      data: [{ number: 11, title: INVALID_TITLE, state: 'open' }],
     })
     await closeInvalidConfigIssue(octokit, makeRepo())
     expect(octokit.rest.issues.update).toHaveBeenCalledWith(

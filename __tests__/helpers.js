@@ -49,6 +49,9 @@ const createMockOctokit = () => {
         createLabel: jest.fn(async () => ({ data: {} })),
         createComment: jest.fn(async (args) => ({ data: { id: 1, ...args } })),
       },
+      search: {
+        issuesAndPullRequests: jest.fn(async () => ({ data: { items: [] } })),
+      },
     },
   }
   mock.__calls = calls
