@@ -660,4 +660,14 @@ describe('splitByRisk', () => {
     expect(autoApply.map((c) => c.kind)).toEqual(['vulnerabilityAlerts', 'secretScanning'])
     expect(needsConsent.map((c) => c.kind)).toEqual(['branchProtection', 'repo'])
   })
+
+  it('routes templated-files changes to autoApply (the PR is the consent gate)', () => {
+    const changes = [
+      { kind: 'files' },
+      { kind: 'branchProtection' },
+    ]
+    const { autoApply, needsConsent } = splitByRisk(changes)
+    expect(autoApply.map((c) => c.kind)).toEqual(['files'])
+    expect(needsConsent.map((c) => c.kind)).toEqual(['branchProtection'])
+  })
 })

@@ -1,3 +1,8 @@
+// Auto-applied changes don't go through the consent-issue gate. The repo
+// security flags are genuinely low-risk one-API-call toggles. `files` is
+// here because the apply doesn't actually mutate the repo — it opens (or
+// updates) a `repomanager_files` PR that the user must still review and
+// merge before any file content changes. The PR itself is the consent gate.
 const LOW_RISK_KINDS = new Set([
   'vulnerabilityAlerts',
   'automatedSecurityFixes',
@@ -5,6 +10,7 @@ const LOW_RISK_KINDS = new Set([
   'secretScanningPushProtection',
   'privateVulnerabilityReporting',
   'dependabotSecurityUpdates',
+  'files',
 ])
 
 const resolveBranchName = (branch, defaultBranch) =>
