@@ -92,6 +92,6 @@ jobs:
               AppId=${{ secrets.APP_ID }} \
               GitHubWebhookSecret=${{ secrets.WEBHOOK_SECRET }} \
               "Cert=$CERT_B64" \
-              ReadOnly=false
+              ReadOnly=true
         env:
           CERT: ${{ secrets.CERT }}
