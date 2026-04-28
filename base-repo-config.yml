@@ -27,8 +27,9 @@ rulesets:
       - type: required_linear_history
       - type: pull_request
         parameters:
-          required_approving_review_count: 1
-          dismiss_stale_reviews_on_push: true
+          # 0 — PRs are still required, but a single maintainer can self-
+          # merge without waiting for an approval. The other PR-rule
+          # parameters become moot at 0 reviews so are dropped.
+          required_approving_review_count: 0
           require_code_owner_review: false
-          require_last_push_approval: false
           required_review_thread_resolution: true
