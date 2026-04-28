@@ -482,6 +482,32 @@ describe('planRepo drift detection', () => {
       })
       expect(changes.find((c) => c.kind === 'repo')).toBeTruthy()
     })
+
+    it('treats `allow_auto_merge: true` on a private repo as unattainable when actual stays false', async () => {
+      // Repro for the free-plan loop on chrisns/blog, chrisns/legible2 etc.
+      // GitHub silently keeps the value at false, but we should stop opening
+      // a fresh consent issue every 10 minutes for it.
+      const octokit = createMockOctokit()
+      octokit.rest.repos.get.mockResolvedValue({
+        data: { has_wiki: false, allow_auto_merge: false },
+      })
+      const changes = await planRepo(octokit, makeRepo({ private: true }), {
+        repo: { has_wiki: false, allow_auto_merge: true },
+      })
+      expect(changes.filter((c) => c.kind === 'repo')).toEqual([])
+    })
+
+    it('still emits drift when the same key is the only difference on a public repo', async () => {
+      // Public repos can flip allow_auto_merge freely — drift is real.
+      const octokit = createMockOctokit()
+      octokit.rest.repos.get.mockResolvedValue({
+        data: { has_wiki: false, allow_auto_merge: false },
+      })
+      const changes = await planRepo(octokit, makeRepo({ private: false }), {
+        repo: { has_wiki: false, allow_auto_merge: true },
+      })
+      expect(changes.find((c) => c.kind === 'repo')).toBeTruthy()
+    })
   })
 
   describe('templated files (presence mode)', () => {

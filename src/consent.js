@@ -163,7 +163,19 @@ const collectIssuesByLabel = async (octokit, owner, repo, label, title) => {
     })
     ingest(data && data.items)
   } catch (error) {
-    if (error.status !== 404 && error.status !== 422) throw error
+    // Search is best-effort — listForRepo below covers us. Specifically
+    // tolerate the secondary-rate-limit 403 we'll definitely hit at scale
+    // (search is 30 req/min auth'd) and validation 422s. Anything else we
+    // log and keep going rather than crash the whole upsert.
+    if (
+      error.status !== 404 &&
+      error.status !== 403 &&
+      error.status !== 422
+    ) {
+      console.warn(
+        `${owner}/${repo}: search lookup failed (${error.status || '?'}): ${error.message}`,
+      )
+    }
   }
 
   for (const state of ['open', 'closed']) {
@@ -228,7 +240,15 @@ const closeDuplicateIssues = async (octokit, owner, repo, label, title, keepNumb
         state_reason: 'not_planned',
       })
     } catch (error) {
-      if (error.status !== 404 && error.status !== 410) throw error
+      // 404/410 — issue went away. 422 — issue is locked / can't be edited.
+      // Either way it isn't an open duplicate any more, log and continue.
+      if (
+        error.status !== 404 &&
+        error.status !== 410 &&
+        error.status !== 422
+      ) {
+        throw error
+      }
     }
   }
 }

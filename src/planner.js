@@ -268,9 +268,29 @@ const fetchRepoSettings = async (octokit, owner, repo) => {
   }
 }
 
-const repoSettingsMatch = (actual, desiredRepo) => {
+// Some `repo:update` keys are silently ignored by GitHub on certain plans
+// (e.g. `allow_auto_merge: true` PATCHes a no-op on private repos that
+// aren't on Pro). The PATCH succeeds, the actual stays at the unsupported
+// value, the planner re-detects drift, and the bot loops forever opening
+// consent issues nobody can satisfy. Skip those keys when the actual state
+// proves the constraint is in force.
+const isUnattainableSetting = (key, desiredValue, actual, repo) => {
+  if (!repo || !repo.private) return false
+  // Private repo can't enable auto-merge without Pro/Team/Enterprise. If
+  // GitHub kept it false despite our previous attempts, treat it as a fixed
+  // ceiling rather than perpetual drift.
+  if (key === 'allow_auto_merge' && desiredValue === true && actual === false) {
+    return true
+  }
+  return false
+}
+
+const repoSettingsMatch = (actual, desiredRepo, repo) => {
   if (!actual) return false
-  return Object.entries(desiredRepo).every(([k, v]) => actual[k] === v)
+  return Object.entries(desiredRepo).every(([k, v]) => {
+    if (isUnattainableSetting(k, v, actual[k], repo)) return true
+    return actual[k] === v
+  })
 }
 
 const planRepoUpdate = async (octokit, repo, desired) => {
@@ -280,7 +300,7 @@ const planRepoUpdate = async (octokit, repo, desired) => {
   // fails, fall back to assuming drift — better to propose a no-op apply
   // than silently miss real drift.
   const actual = await fetchRepoSettings(octokit, repo.owner.login, repo.name)
-  if (repoSettingsMatch(actual, desired.repo)) return []
+  if (repoSettingsMatch(actual, desired.repo, repo)) return []
   return [
     {
       kind: 'repo',
