@@ -23,12 +23,29 @@ const expandAllContexts = async (octokit, owner, repo, branch) => {
   }
 }
 
+// GitHub 403s `repos/.../rulesets` and `repos/.../branches/.../protection`
+// for private repos on the Free plan with "Upgrade to GitHub Pro or make
+// this repository public to enable this feature." The bot can't manage
+// either on those repos, so we treat the 403 as "skip" rather than drift.
+const isRulesetUnavailable = (error) =>
+  error &&
+  error.status === 403 &&
+  /Upgrade to GitHub Pro|make this repository public/i.test(error.message || '')
+
 const fetchExistingBranchProtection = async (octokit, owner, repo, branch) => {
   try {
     const { data } = await octokit.rest.repos.getBranchProtection({ owner, repo, branch })
     return data
   } catch (error) {
     if (error.status === 404) return null
+    if (isRulesetUnavailable(error)) {
+      // Same Pro-only restriction as rulesets — propagate as a sentinel so
+      // the caller can skip this branch entirely instead of surfacing it as
+      // drift we can never apply.
+      const skip = new Error('branch protection unavailable on this plan')
+      skip.skipBranchProtection = true
+      throw skip
+    }
     throw error
   }
 }
@@ -89,12 +106,23 @@ const planBranchProtection = async (octokit, repo, desired) => {
         contexts: await expandAllContexts(octokit, repo.owner.login, repo.name, branch),
       }
     }
-    const existing = await fetchExistingBranchProtection(
-      octokit,
-      repo.owner.login,
-      repo.name,
-      branch,
-    )
+    let existing
+    try {
+      existing = await fetchExistingBranchProtection(
+        octokit,
+        repo.owner.login,
+        repo.name,
+        branch,
+      )
+    } catch (error) {
+      if (error.skipBranchProtection) {
+        console.warn(
+          `${repo.owner.login}/${repo.name}: branch protection unavailable on this plan; skipping ${branch}`,
+        )
+        continue
+      }
+      throw error
+    }
     if (branchProtectionMatches(existing, config)) continue
     changes.push({
       kind: 'branchProtection',
@@ -165,7 +193,16 @@ const planRulesets = async (octokit, repo, desired) => {
       repo: repo.name,
     })
   } catch (error) {
-    if (error.status !== 404) throw error
+    if (error.status === 404) {
+      // no rulesets endpoint response — fall through to "no existing"
+    } else if (isRulesetUnavailable(error)) {
+      console.warn(
+        `${repo.owner.login}/${repo.name}: rulesets API unavailable (likely a private repo on the Free plan); skipping rulesets for this repo`,
+      )
+      return []
+    } else {
+      throw error
+    }
   }
 
   for (const rs of desired) {

@@ -180,6 +180,30 @@ describe('upsertConsentIssue', () => {
     )
   })
 
+  it('closes pre-existing open duplicates at the start of every upsert', async () => {
+    // No new issue is being created here — the upsert finds three open
+    // duplicates already in the index and closes the two younger ones,
+    // leaving the lowest-numbered as the canonical winner. This is the bot
+    // tidying up loops it created previously, even on cron ticks where the
+    // changeset is identical to what's already proposed.
+    const octokit = createMockOctokit()
+    octokit.rest.issues.listForRepo.mockResolvedValue({
+      data: [
+        { number: 5, title: ISSUE_TITLE, state: 'open', body: '' },
+        { number: 9, title: ISSUE_TITLE, state: 'open', body: '' },
+        { number: 12, title: ISSUE_TITLE, state: 'open', body: '' },
+      ],
+    })
+    await upsertConsentIssue(octokit, makeRepo(), [
+      { id: 'bp:main', kind: 'branchProtection', summary: 'bp' },
+    ])
+    const closeCalls = octokit.rest.issues.update.mock.calls
+      .map((c) => c[0])
+      .filter((c) => c.state === 'closed')
+    expect(closeCalls.map((c) => c.issue_number).sort((a, b) => a - b)).toEqual([9, 12])
+    expect(octokit.rest.issues.create).not.toHaveBeenCalled()
+  })
+
   it('closes a duplicate consent issue created racily alongside ours', async () => {
     const octokit = createMockOctokit()
     // First lookup: empty (stale read). After we create, a follow-up lookup

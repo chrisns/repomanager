@@ -276,6 +276,61 @@ describe('planRepo files visibility', () => {
   })
 })
 
+describe('planRulesets graceful degrade', () => {
+  it('returns no ruleset changes when GitHub 403s the rulesets API on a private free-plan repo', async () => {
+    const octokit = createMockOctokit()
+    const upgrade = new Error(
+      'Upgrade to GitHub Pro or make this repository public to enable this feature.',
+    )
+    upgrade.status = 403
+    octokit.paginate.mockRejectedValue(upgrade)
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const changes = await planRepo(octokit, makeRepo(), {
+      rulesets: [
+        { name: 'default-branch', target: 'branch', enforcement: 'active', rules: [] },
+      ],
+    })
+    expect(changes.filter((c) => c.kind === 'ruleset')).toEqual([])
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('still throws on unrelated 403s', async () => {
+    const octokit = createMockOctokit()
+    const forbidden = new Error('forbidden for some other reason')
+    forbidden.status = 403
+    octokit.paginate.mockRejectedValue(forbidden)
+    await expect(
+      planRepo(octokit, makeRepo(), {
+        rulesets: [
+          { name: 'default-branch', target: 'branch', enforcement: 'active', rules: [] },
+        ],
+      }),
+    ).rejects.toThrow('forbidden for some other reason')
+  })
+
+  it('skips branchProtection silently when GitHub 403s with the same Pro-only message', async () => {
+    const octokit = createMockOctokit()
+    const upgrade = new Error(
+      'Upgrade to GitHub Pro or make this repository public to enable this feature.',
+    )
+    upgrade.status = 403
+    octokit.rest.repos.getBranchProtection.mockRejectedValue(upgrade)
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const changes = await planRepo(octokit, makeRepo(), {
+      branchProtection: [
+        {
+          branch: '__DEFAULT_BRANCH__',
+          required_status_checks: { strict: false, contexts: ['ci'] },
+        },
+      ],
+    })
+    expect(changes.filter((c) => c.kind === 'branchProtection')).toEqual([])
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+})
+
 describe('planRepo drift detection', () => {
   describe('branch protection', () => {
     it('emits no change when existing protection already matches', async () => {

@@ -244,7 +244,37 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
     '0e8a16',
     'repomanager: pending config changes awaiting approval',
   )
-  const existing = await findIssueByLabelAnyState(octokit, owner, name, CONSENT_LABEL, ISSUE_TITLE)
+  // Proactive dedup: every time we touch the consent issue we first union
+  // all matching issues (search + open + closed lists) and close every open
+  // duplicate above the lowest issue number. This is the bot tidying up
+  // after itself across past loops, even on cron ticks where there are no
+  // changes to propose.
+  const allMatching = await collectIssuesByLabel(
+    octokit,
+    owner,
+    name,
+    CONSENT_LABEL,
+    ISSUE_TITLE,
+  )
+  const openMatching = allMatching.filter((i) => i.state === 'open')
+  if (openMatching.length > 1) {
+    const winner = pickCanonicalIssue(openMatching)
+    await closeDuplicateIssues(
+      octokit,
+      owner,
+      name,
+      CONSENT_LABEL,
+      ISSUE_TITLE,
+      winner.number,
+    )
+    // Reflect the close locally so the picker below sees a single open.
+    for (const issue of allMatching) {
+      if (issue.state === 'open' && issue.number !== winner.number) {
+        issue.state = 'closed'
+      }
+    }
+  }
+  const existing = pickCanonicalIssue(allMatching)
 
   if (!existing) {
     if (!changes.length) return null
