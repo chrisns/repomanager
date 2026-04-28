@@ -253,9 +253,31 @@ const closeDuplicateIssues = async (octokit, owner, repo, label, title, keepNumb
   }
 }
 
+// True when the repo metadata explicitly says issues are turned off, or the
+// API has just told us so. Either way we have nowhere to put a consent
+// issue, so we skip the whole upsert silently rather than crashing the
+// per-repo cron pass.
+const issuesDisabled = (repo) => repo && repo.has_issues === false
+const isIssuesDisabledError = (error) =>
+  error &&
+  /Issues has been disabled in this repository/i.test(error.message || '')
+
 const upsertConsentIssue = async (octokit, repo, changes) => {
   const owner = repo.owner.login
   const name = repo.name
+  if (issuesDisabled(repo)) return null
+  try {
+    return await upsertConsentIssueInner(octokit, repo, changes, owner, name)
+  } catch (error) {
+    if (isIssuesDisabledError(error)) {
+      console.warn(`${owner}/${name}: issues disabled, skipping consent issue`)
+      return null
+    }
+    throw error
+  }
+}
+
+const upsertConsentIssueInner = async (octokit, repo, changes, owner, name) => {
   await ensureLabel(
     octokit,
     owner,

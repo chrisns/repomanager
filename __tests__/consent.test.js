@@ -153,6 +153,32 @@ describe('upsertConsentIssue', () => {
     expect(octokit.rest.issues.update).not.toHaveBeenCalled()
   })
 
+  it('skips silently when the repo has issues disabled', async () => {
+    const octokit = createMockOctokit()
+    const repo = makeRepo({ has_issues: false })
+    const result = await upsertConsentIssue(octokit, repo, [
+      { id: 'bp:main', kind: 'branchProtection', summary: 'bp' },
+    ])
+    expect(result).toBeNull()
+    expect(octokit.rest.issues.create).not.toHaveBeenCalled()
+    expect(octokit.rest.issues.listForRepo).not.toHaveBeenCalled()
+  })
+
+  it('falls through silently when create errors with the issues-disabled message', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
+    octokit.rest.issues.getLabel.mockRejectedValue(notFoundError())
+    octokit.rest.issues.create.mockRejectedValue(
+      Object.assign(new Error('Issues has been disabled in this repository.'), {
+        status: 410,
+      }),
+    )
+    const result = await upsertConsentIssue(octokit, makeRepo(), [
+      { id: 'bp:main', kind: 'branchProtection', summary: 'bp' },
+    ])
+    expect(result).toBeNull()
+  })
+
   it('does not create a new issue when there are no changes', async () => {
     const octokit = createMockOctokit()
     octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
