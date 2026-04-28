@@ -292,20 +292,26 @@ const planRepoUpdate = async (octokit, repo, desired) => {
   ]
 }
 
+// Returns a per-path metadata map { path: { content, presence } } after
+// applying visibility filters. Backwards compatible: string entries become
+// `{ content: str, presence: false }`.
 const resolveFileVisibility = (filesConfig, repoVisibility) => {
   if (!filesConfig || filesConfig === false) return null
   const resolved = {}
   for (const [path, entry] of Object.entries(filesConfig)) {
     if (typeof entry === 'string') {
-      resolved[path] = entry
+      resolved[path] = { content: entry, presence: false }
     } else if (entry && typeof entry === 'object') {
       if (!entry.visibility || entry.visibility === repoVisibility) {
-        resolved[path] = entry.content
+        resolved[path] = { content: entry.content, presence: !!entry.presence }
       }
     }
   }
   return Object.keys(resolved).length ? resolved : null
 }
+
+const renderTemplate = (content) =>
+  content.replace(/\{\{year\}\}/g, String(new Date().getUTCFullYear()))
 
 const fetchFileContent = async (octokit, owner, repo, path, ref) => {
   try {
@@ -319,38 +325,42 @@ const fetchFileContent = async (octokit, owner, repo, path, ref) => {
   }
 }
 
+// Decide which files actually need writing. A `presence` file only needs
+// writing if missing — and gets `{{year}}` rendered at plan time. A normal
+// file needs writing if missing or if content differs. The applier writes
+// exactly the map we return; everything else is left alone.
 const planFiles = async (octokit, repo, desired) => {
   if (!desired.files || desired.files === false) return []
   const visibility = repo.private ? 'private' : repo.visibility || 'public'
   const filtered = resolveFileVisibility(desired.files, visibility)
   if (!filtered) return []
   const ref = repo.default_branch
-  // Compare each desired file against what's on the default branch. Drift if
-  // any file is missing or differs. Don't block creation of the consent
-  // change on a single file fetch failing — fail open by treating an unknown
-  // path as drift, otherwise we silently miss real templated-file rot.
-  let drift = false
-  for (const [path, content] of Object.entries(filtered)) {
+  const toWrite = {}
+  for (const [path, { content, presence }] of Object.entries(filtered)) {
     let actual
     try {
       actual = await fetchFileContent(octokit, repo.owner.login, repo.name, path, ref)
     } catch {
-      drift = true
-      break
+      // Fail open: treat fetch errors as drift so we don't silently miss
+      // real templated-file rot.
+      toWrite[path] = presence ? renderTemplate(content) : content
+      continue
     }
-    if (actual === null || actual !== content) {
-      drift = true
-      break
+    if (presence) {
+      if (actual === null) toWrite[path] = renderTemplate(content)
+      // else: file exists, hands off
+    } else {
+      if (actual === null || actual !== content) toWrite[path] = content
     }
   }
-  if (!drift) return []
-  const names = Object.keys(filtered)
+  if (!Object.keys(toWrite).length) return []
+  const names = Object.keys(toWrite)
   return [
     {
       kind: 'files',
       id: 'files:pr',
       summary: `Open PR to update templated files (${names.join(', ')})`,
-      files: filtered,
+      files: toWrite,
       riskLevel: 'high',
     },
   ]

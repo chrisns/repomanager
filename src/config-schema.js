@@ -95,6 +95,10 @@ const RepoConfig = z
             z.object({
               content: z.string(),
               visibility: z.enum(['public', 'private', 'internal']).optional(),
+              // When true the bot only checks the file exists and mints it
+              // (with `{{year}}` substituted to the current year) if it
+              // doesn't. Future content drift is ignored.
+              presence: z.boolean().optional(),
             }),
           ]),
         ),

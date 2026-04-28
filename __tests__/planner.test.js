@@ -191,7 +191,7 @@ describe('planRepo', () => {
 describe('resolveFileVisibility', () => {
   it('passes through plain string entries regardless of visibility', () => {
     const result = resolveFileVisibility({ 'README.md': 'hi' }, 'private')
-    expect(result).toEqual({ 'README.md': 'hi' })
+    expect(result).toEqual({ 'README.md': { content: 'hi', presence: false } })
   })
 
   it('includes object entries with matching visibility', () => {
@@ -200,8 +200,8 @@ describe('resolveFileVisibility', () => {
       '.github/FUNDING.yml': { content: 'github: [u]', visibility: 'public' },
     }
     expect(resolveFileVisibility(files, 'public')).toEqual({
-      'LICENSE': 'MIT',
-      '.github/FUNDING.yml': 'github: [u]',
+      'LICENSE': { content: 'MIT', presence: false },
+      '.github/FUNDING.yml': { content: 'github: [u]', presence: false },
     })
   })
 
@@ -211,7 +211,7 @@ describe('resolveFileVisibility', () => {
       'SECURITY.md': { content: 'sec' },
     }
     expect(resolveFileVisibility(files, 'private')).toEqual({
-      'SECURITY.md': 'sec',
+      'SECURITY.md': { content: 'sec', presence: false },
     })
   })
 
@@ -220,7 +220,16 @@ describe('resolveFileVisibility', () => {
       'CODEOWNERS': { content: '* @team' },
     }
     expect(resolveFileVisibility(files, 'private')).toEqual({
-      'CODEOWNERS': '* @team',
+      'CODEOWNERS': { content: '* @team', presence: false },
+    })
+  })
+
+  it('passes through the presence flag when set', () => {
+    const files = {
+      'LICENSE': { content: 'MIT {{year}}', presence: true },
+    }
+    expect(resolveFileVisibility(files, 'public')).toEqual({
+      'LICENSE': { content: 'MIT {{year}}', presence: true },
     })
   })
 
@@ -472,6 +481,87 @@ describe('planRepo drift detection', () => {
         repo: { has_wiki: false },
       })
       expect(changes.find((c) => c.kind === 'repo')).toBeTruthy()
+    })
+  })
+
+  describe('templated files (presence mode)', () => {
+    it('mints a presence-only file when missing, with {{year}} substituted', async () => {
+      const octokit = createMockOctokit()
+      // default getContent mock returns 404 — file is missing
+      const changes = await planRepo(octokit, makeRepo(), {
+        files: {
+          'LICENSE': {
+            content: 'Copyright (c) {{year}} CNS',
+            presence: true,
+          },
+        },
+      })
+      const filesChange = changes.find((c) => c.kind === 'files')
+      expect(filesChange).toBeTruthy()
+      const year = new Date().getUTCFullYear()
+      expect(filesChange.files).toEqual({
+        'LICENSE': `Copyright (c) ${year} CNS`,
+      })
+    })
+
+    it('emits no change when a presence-only file already exists, regardless of content drift', async () => {
+      const octokit = createMockOctokit()
+      octokit.rest.repos.getContent.mockResolvedValue({
+        data: {
+          type: 'file',
+          content: Buffer.from('Copyright (c) 1999 someone else', 'utf8').toString(
+            'base64',
+          ),
+        },
+      })
+      const changes = await planRepo(octokit, makeRepo(), {
+        files: {
+          'LICENSE': {
+            content: 'Copyright (c) {{year}} CNS',
+            presence: true,
+          },
+        },
+      })
+      expect(changes.filter((c) => c.kind === 'files')).toEqual([])
+    })
+
+    it('only PRs the files that actually need writing in a mixed set', async () => {
+      const octokit = createMockOctokit()
+      // LICENSE exists (presence-only, leave alone). SECURITY.md exists but
+      // its content drifts (content-mode, must be rewritten).
+      octokit.rest.repos.getContent.mockImplementation(async ({ path }) => {
+        if (path === 'LICENSE') {
+          return {
+            data: {
+              type: 'file',
+              content: Buffer.from('any LICENSE', 'utf8').toString('base64'),
+            },
+          }
+        }
+        if (path === 'SECURITY.md') {
+          return {
+            data: {
+              type: 'file',
+              content: Buffer.from('OLD', 'utf8').toString('base64'),
+            },
+          }
+        }
+        const err = new Error('Not Found')
+        err.status = 404
+        throw err
+      })
+      const changes = await planRepo(octokit, makeRepo(), {
+        files: {
+          'LICENSE': {
+            content: 'Copyright (c) {{year}} CNS',
+            presence: true,
+          },
+          'SECURITY.md': 'NEW',
+        },
+      })
+      const filesChange = changes.find((c) => c.kind === 'files')
+      expect(filesChange.files).toEqual({ 'SECURITY.md': 'NEW' })
+      expect(filesChange.summary).toBe('Open PR to update templated files (SECURITY.md)')
     })
   })
 
