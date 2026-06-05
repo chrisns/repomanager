@@ -269,6 +269,25 @@ describe('cronWorker', () => {
   it('throws when installationId is missing', async () => {
     await expect(cronWorker({})).rejects.toThrow(/installationId required/)
   })
+
+  it('processes every repo even when there are more than the concurrency limit', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.getContent.mockRejectedValue(
+      Object.assign(new Error('nf'), { status: 404 }),
+    )
+    octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
+    mockedOctokitModule.__state.octokit = octokit
+    const repos = Array.from({ length: 15 }, (_, i) => makeRepo({ name: `r${i}` }))
+    mockedOctokitModule.__state.reposByInstallation = { 7: repos }
+    process.env.WORKER_CONCURRENCY = '4'
+    try {
+      const result = await cronWorker({ installationId: 7 })
+      expect(result.processed).toBe(15)
+      expect(result.failed).toBe(0)
+    } finally {
+      delete process.env.WORKER_CONCURRENCY
+    }
+  })
 })
 
 describe('cronDispatcher', () => {
@@ -412,6 +431,55 @@ describe('webhook entry', () => {
     })
     expect(octokit.rest.repos.updateBranchProtection).not.toHaveBeenCalled()
     expect(octokit.rest.issues.update).not.toHaveBeenCalled()
+  })
+
+  it('short-circuits the bot\'s own issues.edited before creating the app', async () => {
+    mockedOctokitModule.createApp.mockClear()
+    const result = await webhook({
+      headers: {
+        'x-hub-signature-256': 'sha256=ignored',
+        'x-github-delivery': 'd-sc',
+        'x-github-event': 'issues',
+      },
+      body: JSON.stringify({
+        action: 'edited',
+        sender: { login: 'the-repository-manager[bot]', type: 'Bot' },
+        issue: {
+          number: 9,
+          title: 'repomanager: changes awaiting approval',
+          labels: [{ name: 'repomanager:consent' }],
+        },
+        repository: makeRepo(),
+      }),
+    })
+    expect(result.statusCode).toBe(202)
+    // The whole point is to not pay for createApp()/import('octokit')/verify.
+    expect(mockedOctokitModule.createApp).not.toHaveBeenCalled()
+  })
+
+  it('does not short-circuit a push authored by another bot', async () => {
+    mockedOctokitModule.createApp.mockClear()
+    const octokit = createMockOctokit()
+    octokit.rest.repos.getContent.mockRejectedValue(
+      Object.assign(new Error('nf'), { status: 404 }),
+    )
+    octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
+    mockedOctokitModule.__state.octokit = octokit
+    const result = await webhook({
+      headers: {
+        'x-hub-signature-256': 'sha256=ignored',
+        'x-github-delivery': 'd-push-bot',
+        'x-github-event': 'push',
+      },
+      body: JSON.stringify({
+        sender: { login: 'renovate[bot]', type: 'Bot' },
+        repository: makeRepo(),
+        commits: [{ added: [], modified: ['.github/repo-config.yml'], removed: [] }],
+      }),
+    })
+    expect(result.statusCode).toBe(202)
+    expect(mockedOctokitModule.createApp).toHaveBeenCalled()
+    expect(octokit.rest.repos.enableVulnerabilityAlerts).toHaveBeenCalled()
   })
 
   it('handles issues.edited consent events through the webhook dispatcher', async () => {

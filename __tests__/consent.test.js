@@ -187,6 +187,25 @@ describe('upsertConsentIssue', () => {
     expect(octokit.rest.issues.create).not.toHaveBeenCalled()
   })
 
+  it('does not hit the throttled search API on the no-drift path', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
+    await upsertConsentIssue(octokit, makeRepo(), [])
+    // The list union finds any issue to close; search is reserved for ticks
+    // that actually have changes to propose. This is the per-repo, per-tick
+    // call that octokit serialises to ~2s and that dominated worker compute.
+    expect(octokit.rest.search.issuesAndPullRequests).not.toHaveBeenCalled()
+  })
+
+  it('still uses search when there are changes to propose', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
+    await upsertConsentIssue(octokit, makeRepo(), [
+      { id: 'bp:main', kind: 'branchProtection', summary: 'bp' },
+    ])
+    expect(octokit.rest.search.issuesAndPullRequests).toHaveBeenCalled()
+  })
+
   it('reuses an existing issue surfaced only by the search index', async () => {
     const octokit = createMockOctokit()
     // listForRepo serves a stale empty response (the bug we're guarding

@@ -103,13 +103,43 @@ const processRepo = async (octokit, repo) => {
   return { applied: results.length, pendingConsent: needsConsent.length }
 }
 
+const workerConcurrency = () => {
+  const n = Number(process.env.WORKER_CONCURRENCY)
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 6
+}
+
+// Run `worker` over `items` with at most `limit` in flight. Resolves once every
+// item settles. The worker callback is responsible for catching its own errors
+// (cronWorker does, per-repo) so one bad repo can never abort the sweep.
+const mapWithConcurrency = async (items, limit, worker) => {
+  let next = 0
+  const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) {
+      const index = next++
+      await worker(items[index], index)
+    }
+  })
+  await Promise.all(runners)
+}
+
 const cronWorker = async (event) => {
   const installationId = event && event.installationId
   if (!installationId) throw new Error('cronWorker: installationId required in event')
   const app = await createApp()
+
+  // Collect first, then fan out: a single installation's repos were processed
+  // strictly serially, so a large tenant (100+ repos, multiple API calls each)
+  // could not finish inside the function timeout and starved its tail on every
+  // tick. Bounded concurrency lets it complete within budget without
+  // overwhelming GitHub's rate limits.
+  const repositories = []
+  for await (const { octokit, repository } of app.eachRepository.iterator({ installationId })) {
+    repositories.push({ octokit, repository })
+  }
+
   let processed = 0
   let failed = 0
-  for await (const { octokit, repository } of app.eachRepository.iterator({ installationId })) {
+  await mapWithConcurrency(repositories, workerConcurrency(), async ({ octokit, repository }) => {
     try {
       await processRepo(octokit, repository)
       processed++
@@ -119,7 +149,8 @@ const cronWorker = async (event) => {
         `${repository.owner.login}/${repository.name}: unexpected failure: ${error.message}`,
       )
     }
-  }
+  })
+
   console.info(
     `repomanager worker complete. installationId=${installationId} processed=${processed} failed=${failed}`,
   )
@@ -265,15 +296,23 @@ const handleInstallation = async (octokit, payload) => {
   }
 }
 
-const webhook = async (event) => {
-  const app = await createApp()
-  app.webhooks.on('issues.edited', ({ octokit, payload }) => handleIssuesEdited(octokit, payload))
-  app.webhooks.on('push', ({ octokit, payload }) => handlePush(octokit, payload))
-  app.webhooks.on('installation.created', ({ octokit, payload }) => handleInstallation(octokit, payload))
-  app.webhooks.on('installation_repositories.added', ({ octokit, payload }) =>
-    handleInstallation(octokit, payload),
-  )
+// Cheap discard test run BEFORE createApp()/HMAC verify. GitHub re-delivers
+// every consent-issue edit the bot makes to itself, and each delivery is a
+// billed Lambda invocation we would throw away anyway (handleIssuesEdited's
+// sender guard). Scope it to the `issues` stream only — pushes and installation
+// events authored by other bots (Renovate, CI) are still legitimate triggers.
+// This only ever skips work; it never acts on the unverified body.
+const shouldShortCircuit = (name, body) => {
+  if (name !== 'issues') return false
+  try {
+    const sender = JSON.parse(body).sender
+    return !!(sender && sender.type === 'Bot' && /\[bot\]$/.test(sender.login || ''))
+  } catch {
+    return false
+  }
+}
 
+const webhook = async (event) => {
   const headers = event.headers || {}
   const signature = headers['x-hub-signature-256'] || headers['X-Hub-Signature-256']
   const id = headers['x-github-delivery'] || headers['X-GitHub-Delivery']
@@ -281,6 +320,18 @@ const webhook = async (event) => {
   const body = event.isBase64Encoded
     ? Buffer.from(event.body || '', 'base64').toString('utf8')
     : event.body || ''
+
+  if (shouldShortCircuit(name, body)) {
+    return { statusCode: 202, body: 'ignored: self-authored' }
+  }
+
+  const app = await createApp()
+  app.webhooks.on('issues.edited', ({ octokit, payload }) => handleIssuesEdited(octokit, payload))
+  app.webhooks.on('push', ({ octokit, payload }) => handlePush(octokit, payload))
+  app.webhooks.on('installation.created', ({ octokit, payload }) => handleInstallation(octokit, payload))
+  app.webhooks.on('installation_repositories.added', ({ octokit, payload }) =>
+    handleInstallation(octokit, payload),
+  )
 
   try {
     await app.webhooks.verifyAndReceive({ id, name, signature, payload: body })

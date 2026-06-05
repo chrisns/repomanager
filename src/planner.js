@@ -264,6 +264,40 @@ const planSimpleFlag = (key, desired, summary) =>
         },
       ]
 
+// Config flag -> the key GitHub reports it under in repos.get's
+// `security_and_analysis` block. These are the flags we can diff against
+// actual state from a single repo GET (the others — vulnerability alerts,
+// automated security fixes, private vulnerability reporting — live on separate
+// endpoints and stay as unconditional idempotent enables).
+const SECURITY_ANALYSIS_KEYS = {
+  secretScanning: 'secret_scanning',
+  secretScanningPushProtection: 'secret_scanning_push_protection',
+  dependabotSecurityUpdates: 'dependabot_security_updates',
+}
+const SECURITY_ANALYSIS_FLAGS = Object.keys(SECURITY_ANALYSIS_KEYS)
+
+// Like planSimpleFlag, but diffs against the repo's actual security-and-analysis
+// state so we don't re-apply a flag that is already in the desired state on
+// every single tick. Two behaviours matter for cost:
+//   * already-converged → emit nothing (no redundant write).
+//   * GitHub omits the feature entirely (e.g. secret scanning on a private repo
+//     without Advanced Security) → emit nothing. Re-proposing it is the
+//     perpetual "failed to apply secretScanning: not available" loop the worker
+//     logs every tick on free-plan repos.
+// When we couldn't read actual state (GET failed → actualRepo null, or no
+// security_and_analysis block) we fail open and propose the change as before.
+const planSecurityAnalysisFlag = (key, desired, actualRepo, summary) => {
+  if (desired[key] === undefined) return []
+  const change = [{ kind: key, id: key, summary, value: desired[key], riskLevel: 'low' }]
+  const saa = actualRepo && actualRepo.security_and_analysis
+  if (!saa) return change
+  const field = saa[SECURITY_ANALYSIS_KEYS[key]]
+  if (!field) return []
+  const enabled = field.status === 'enabled'
+  if (enabled === !!desired[key]) return []
+  return change
+}
+
 const fetchRepoSettings = async (octokit, owner, repo) => {
   try {
     const { data } = await octokit.rest.repos.get({ owner, repo })
@@ -299,13 +333,11 @@ const repoSettingsMatch = (actual, desiredRepo, repo) => {
   })
 }
 
-const planRepoUpdate = async (octokit, repo, desired) => {
+const planRepoUpdate = (repo, desired, actual) => {
   if (!desired.repo || Object.keys(desired.repo).length === 0) return []
-  // The repo object passed in (from eachRepository) often lacks merge-method
-  // toggles (allow_squash_merge etc.), so fetch the full record. If the GET
-  // fails, fall back to assuming drift — better to propose a no-op apply
-  // than silently miss real drift.
-  const actual = await fetchRepoSettings(octokit, repo.owner.login, repo.name)
+  // `actual` is the repo record fetched once per plan (planRepo). It is null
+  // when the GET failed — fall back to assuming drift, better a no-op apply
+  // than silently missing real drift.
   if (repoSettingsMatch(actual, desired.repo, repo)) return []
   return [
     {
@@ -394,6 +426,20 @@ const planFiles = async (octokit, repo, desired) => {
 
 const planRepo = async (octokit, repo, desired) => {
   const changes = []
+
+  // Fetch the repo record at most once per plan — both the security-and-
+  // analysis flag diff and planRepoUpdate read from it. Reusing one GET avoids
+  // a second round-trip and, more importantly, lets us skip the redundant
+  // writes that already-converged security flags would otherwise fire on every
+  // tick (the bulk of steady-state cron cost). Any GET failure → null → the
+  // diffs fail open and behave as before.
+  const needsRepoRecord =
+    SECURITY_ANALYSIS_FLAGS.some((k) => desired[k] !== undefined) ||
+    (desired.repo && Object.keys(desired.repo).length > 0)
+  const actualRepo = needsRepoRecord
+    ? await fetchRepoSettings(octokit, repo.owner.login, repo.name).catch(() => null)
+    : null
+
   changes.push(
     ...planSimpleFlag('vulnerabilityAlerts', desired, `Set vulnerability alerts to ${desired.vulnerabilityAlerts}`),
   )
@@ -404,11 +450,14 @@ const planRepo = async (octokit, repo, desired) => {
       `Set automated security fixes to ${desired.automatedSecurityFixes}`,
     ),
   )
-  changes.push(...planSimpleFlag('secretScanning', desired, `Set secret scanning to ${desired.secretScanning}`))
   changes.push(
-    ...planSimpleFlag(
+    ...planSecurityAnalysisFlag('secretScanning', desired, actualRepo, `Set secret scanning to ${desired.secretScanning}`),
+  )
+  changes.push(
+    ...planSecurityAnalysisFlag(
       'secretScanningPushProtection',
       desired,
+      actualRepo,
       `Set secret scanning push protection to ${desired.secretScanningPushProtection}`,
     ),
   )
@@ -420,9 +469,10 @@ const planRepo = async (octokit, repo, desired) => {
     ),
   )
   changes.push(
-    ...planSimpleFlag(
+    ...planSecurityAnalysisFlag(
       'dependabotSecurityUpdates',
       desired,
+      actualRepo,
       `Set dependabot security updates to ${desired.dependabotSecurityUpdates}`,
     ),
   )
@@ -433,7 +483,7 @@ const planRepo = async (octokit, repo, desired) => {
   if (desired.rulesets) {
     changes.push(...(await planRulesets(octokit, repo, desired.rulesets)))
   }
-  changes.push(...(await planRepoUpdate(octokit, repo, desired)))
+  changes.push(...planRepoUpdate(repo, desired, actualRepo))
   changes.push(...(await planFiles(octokit, repo, desired)))
 
   return changes

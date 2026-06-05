@@ -144,7 +144,15 @@ const ensureLabel = async (octokit, owner, repo, name, color, description) => {
 // every call below is unioned to maximise the chance of finding the canonical
 // issue. Without this, a single missed read causes us to create a duplicate
 // consent issue on every cron tick.
-const collectIssuesByLabel = async (octokit, owner, repo, label, title) => {
+// `includeSearch` defaults true. The search endpoint is GitHub's most
+// throttled (30 req/min authenticated) and octokit pre-emptively serialises it
+// to ~2s per call, so on a worker that sweeps every repo every tick it is the
+// single biggest source of billed wall-clock. The listForRepo union below
+// already finds the canonical issue, so callers on the hot no-drift path pass
+// includeSearch=false to skip it; only paths that genuinely need the extra
+// belt-and-braces coverage (right after creating an issue, racing a stale
+// index) keep it on.
+const collectIssuesByLabel = async (octokit, owner, repo, label, title, includeSearch = true) => {
   const byNumber = new Map()
   const ingest = (arr) => {
     if (!Array.isArray(arr)) return
@@ -156,25 +164,27 @@ const collectIssuesByLabel = async (octokit, owner, repo, label, title) => {
     }
   }
 
-  try {
-    const { data } = await octokit.rest.search.issuesAndPullRequests({
-      q: `repo:${owner}/${repo} is:issue label:"${label}"`,
-      per_page: 100,
-    })
-    ingest(data && data.items)
-  } catch (error) {
-    // Search is best-effort — listForRepo below covers us. Specifically
-    // tolerate the secondary-rate-limit 403 we'll definitely hit at scale
-    // (search is 30 req/min auth'd) and validation 422s. Anything else we
-    // log and keep going rather than crash the whole upsert.
-    if (
-      error.status !== 404 &&
-      error.status !== 403 &&
-      error.status !== 422
-    ) {
-      console.warn(
-        `${owner}/${repo}: search lookup failed (${error.status || '?'}): ${error.message}`,
-      )
+  if (includeSearch) {
+    try {
+      const { data } = await octokit.rest.search.issuesAndPullRequests({
+        q: `repo:${owner}/${repo} is:issue label:"${label}"`,
+        per_page: 100,
+      })
+      ingest(data && data.items)
+    } catch (error) {
+      // Search is best-effort — listForRepo below covers us. Specifically
+      // tolerate the secondary-rate-limit 403 we'll definitely hit at scale
+      // (search is 30 req/min auth'd) and validation 422s. Anything else we
+      // log and keep going rather than crash the whole upsert.
+      if (
+        error.status !== 404 &&
+        error.status !== 403 &&
+        error.status !== 422
+      ) {
+        console.warn(
+          `${owner}/${repo}: search lookup failed (${error.status || '?'}): ${error.message}`,
+        )
+      }
     }
   }
 
@@ -291,12 +301,17 @@ const upsertConsentIssueInner = async (octokit, repo, changes, owner, name) => {
   // duplicate above the lowest issue number. This is the bot tidying up
   // after itself across past loops, even on cron ticks where there are no
   // changes to propose.
+  // On the common no-drift tick (changes empty) we only need to find an
+  // existing open issue to close — the list union does that without the
+  // expensive search call. Reserve search for ticks that actually have changes
+  // to propose, where missing a stale duplicate is worth the extra read.
   const allMatching = await collectIssuesByLabel(
     octokit,
     owner,
     name,
     CONSENT_LABEL,
     ISSUE_TITLE,
+    changes.length > 0,
   )
   const openMatching = allMatching.filter((i) => i.state === 'open')
   if (openMatching.length > 1) {

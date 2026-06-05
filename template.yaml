@@ -51,7 +51,12 @@ Resources:
         Schedule:
           Type: Schedule
           Properties:
-            Schedule: rate(10 minutes)
+            # Webhooks apply config changes in real time on push; this cron is
+            # only a safety-net reconcile for drift that arrives without a
+            # webhook (e.g. settings changed in the GitHub UI). Hourly keeps the
+            # fleet converged while keeping cron/worker compute ~6x lower than
+            # the old 10-minute tick.
+            Schedule: rate(1 hour)
       LoggingConfig:
         LogGroup: !Ref CronLogGroup
 
@@ -66,6 +71,21 @@ Resources:
     Properties:
       FunctionName: repomanager-cron-worker
       Handler: handler.cronWorker
+      # A wedged tenant (e.g. an org too large to finish, or one stuck on a
+      # GitHub rate-limit backoff) used to burn the inherited 360s budget and,
+      # because async invokes default to 2 retries, was billed 3x (≈1080s) on
+      # every tick. 240s bounds the wedge and MaximumRetryAttempts:0 removes the
+      # amplification — a cron worker has no value being retried, the next tick
+      # is the retry. This pair is the single biggest cost lever.
+      Timeout: 240
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+        MaximumEventAgeInSeconds: 540
+      Environment:
+        Variables:
+          # Process repos within an installation concurrently so a large tenant
+          # finishes inside the timeout instead of starving its tail every tick.
+          WORKER_CONCURRENCY: '6'
       LoggingConfig:
         LogGroup: !Ref CronWorkerLogGroup
 

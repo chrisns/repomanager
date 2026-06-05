@@ -671,3 +671,77 @@ describe('splitByRisk', () => {
     expect(needsConsent.map((c) => c.kind)).toEqual(['branchProtection'])
   })
 })
+
+describe('planRepo security-and-analysis flag diffing', () => {
+  const saaConfig = {
+    secretScanning: true,
+    secretScanningPushProtection: true,
+    dependabotSecurityUpdates: true,
+  }
+  const saaKinds = ['secretScanning', 'secretScanningPushProtection', 'dependabotSecurityUpdates']
+
+  it('emits nothing when the flags are already enabled (no redundant write each tick)', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.get.mockResolvedValue({
+      data: {
+        security_and_analysis: {
+          secret_scanning: { status: 'enabled' },
+          secret_scanning_push_protection: { status: 'enabled' },
+          dependabot_security_updates: { status: 'enabled' },
+        },
+      },
+    })
+    const changes = await planRepo(octokit, makeRepo(), saaConfig)
+    expect(changes.filter((c) => saaKinds.includes(c.kind))).toEqual([])
+  })
+
+  it('emits only the flag that actually drifts', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.get.mockResolvedValue({
+      data: {
+        security_and_analysis: {
+          secret_scanning: { status: 'disabled' },
+          secret_scanning_push_protection: { status: 'enabled' },
+          dependabot_security_updates: { status: 'enabled' },
+        },
+      },
+    })
+    const changes = await planRepo(octokit, makeRepo(), saaConfig)
+    expect(changes.filter((c) => saaKinds.includes(c.kind)).map((c) => c.kind)).toEqual([
+      'secretScanning',
+    ])
+  })
+
+  it('skips a feature GitHub omits (unavailable) so it never loops on a failing apply', async () => {
+    const octokit = createMockOctokit()
+    // security_and_analysis present but secret_scanning / push_protection
+    // omitted — GitHub does that on repos whose plan can't offer the feature.
+    octokit.rest.repos.get.mockResolvedValue({
+      data: { security_and_analysis: { dependabot_security_updates: { status: 'enabled' } } },
+    })
+    const changes = await planRepo(octokit, makeRepo(), saaConfig)
+    expect(changes.filter((c) => saaKinds.includes(c.kind))).toEqual([])
+  })
+
+  it('fails open and emits when the repo GET fails', async () => {
+    const octokit = createMockOctokit() // default get → 404
+    const changes = await planRepo(octokit, makeRepo(), saaConfig)
+    expect(changes.filter((c) => saaKinds.includes(c.kind)).map((c) => c.kind)).toEqual(saaKinds)
+  })
+
+  it('fetches the repo record only once for both flag diffing and repo settings', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.get.mockResolvedValue({
+      data: {
+        has_wiki: false,
+        security_and_analysis: {
+          secret_scanning: { status: 'enabled' },
+          secret_scanning_push_protection: { status: 'enabled' },
+          dependabot_security_updates: { status: 'enabled' },
+        },
+      },
+    })
+    await planRepo(octokit, makeRepo(), { ...saaConfig, repo: { has_wiki: false } })
+    expect(octokit.rest.repos.get).toHaveBeenCalledTimes(1)
+  })
+})
