@@ -1,4 +1,4 @@
-const { getRepoConfig } = require('../src/config')
+const { getRepoConfig, loadBaseConfig } = require('../src/config')
 const { RepoConfig } = require('../src/config-schema')
 const { createMockOctokit, notFoundError } = require('./helpers')
 
@@ -61,5 +61,29 @@ describe('RepoConfig schema', () => {
   it('rejects unknown top-level keys', () => {
     const result = RepoConfig.safeParse({ totallyUnknown: true })
     expect(result.success).toBe(false)
+  })
+})
+
+describe('base-repo-config.yml pull_request rule', () => {
+  // GitHub's create-ruleset endpoint rejects a partial `pull_request` rule with
+  // "Invalid property /rules/3: data matches no possible input" — and because
+  // our ruleset comparison is subset-based, an incomplete rule still matches
+  // every ruleset already deployed. So a dropped parameter is invisible until a
+  // brand-new repo needs the ruleset created, then fails there forever.
+  const REQUIRED_PARAMETERS = [
+    'required_approving_review_count',
+    'dismiss_stale_reviews_on_push',
+    'require_code_owner_review',
+    'require_last_push_approval',
+    'required_review_thread_resolution',
+    'allowed_merge_methods',
+  ]
+
+  it('carries every parameter GitHub demands on create', () => {
+    const rule = loadBaseConfig()
+      .rulesets.flatMap((rs) => rs.rules)
+      .find((r) => r.type === 'pull_request')
+    expect(rule).toBeTruthy()
+    expect(Object.keys(rule.parameters).sort()).toEqual([...REQUIRED_PARAMETERS].sort())
   })
 })
