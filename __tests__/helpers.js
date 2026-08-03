@@ -22,6 +22,17 @@ const createMockOctokit = () => {
     createPullRequest: jest.fn(async () => ({ data: { number: 1 } })),
     rest: {
       repos: {
+        // Flag state reads fail by default so the planner falls open and
+        // emits the change, matching the pre-diff behaviour these tests assert.
+        checkVulnerabilityAlerts: jest.fn(async () => {
+          throw new Error('unavailable')
+        }),
+        checkAutomatedSecurityFixes: jest.fn(async () => {
+          throw new Error('unavailable')
+        }),
+        checkPrivateVulnerabilityReporting: jest.fn(async () => {
+          throw new Error('unavailable')
+        }),
         enableVulnerabilityAlerts: record('repos.enableVulnerabilityAlerts'),
         disableVulnerabilityAlerts: record('repos.disableVulnerabilityAlerts'),
         enableAutomatedSecurityFixes: record('repos.enableAutomatedSecurityFixes'),

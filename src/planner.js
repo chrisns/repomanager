@@ -251,18 +251,51 @@ const planRulesets = async (octokit, repo, desired) => {
   return changes
 }
 
-const planSimpleFlag = (key, desired, summary) =>
-  desired[key] === undefined
-    ? []
-    : [
-        {
-          kind: key,
-          id: key,
-          summary,
-          value: desired[key],
-          riskLevel: 'low',
-        },
-      ]
+// These three flags live on their own endpoints rather than in the repo
+// record, so knowing whether they're already set costs a GET. That GET
+// replaces the write we used to fire unconditionally on every repo on every
+// tick — same API budget, but the steady state stops mutating repos that are
+// already in the desired state.
+const FLAG_CHECKS = {
+  vulnerabilityAlerts: async (octokit, args) => {
+    try {
+      await octokit.rest.repos.checkVulnerabilityAlerts(args)
+      return true
+    } catch (error) {
+      if (error.status === 404) return false
+      throw error
+    }
+  },
+  automatedSecurityFixes: async (octokit, args) => {
+    try {
+      const { data } = await octokit.rest.repos.checkAutomatedSecurityFixes(args)
+      return !!data.enabled
+    } catch (error) {
+      if (error.status === 404) return false
+      throw error
+    }
+  },
+  privateVulnerabilityReporting: async (octokit, args) => {
+    const { data } = await octokit.rest.repos.checkPrivateVulnerabilityReporting(args)
+    return !!data.enabled
+  },
+}
+
+const planSimpleFlag = async (octokit, repo, key, desired, summary) => {
+  if (desired[key] === undefined) return []
+  // Private vulnerability reporting is a public-repo feature. Enabling it on a
+  // private repo can never succeed, so proposing it every tick is pure churn.
+  if (key === 'privateVulnerabilityReporting' && repo.private) return []
+  const change = [{ kind: key, id: key, summary, value: desired[key], riskLevel: 'low' }]
+  try {
+    const actual = await FLAG_CHECKS[key](octokit, { owner: repo.owner.login, repo: repo.name })
+    return actual === !!desired[key] ? [] : change
+  } catch {
+    // Couldn't read actual state — fall back to the old behaviour and let the
+    // apply be the idempotent no-op it has always been.
+    return change
+  }
+}
 
 // Config flag -> the key GitHub reports it under in repos.get's
 // `security_and_analysis` block. These are the flags we can diff against
@@ -284,13 +317,17 @@ const SECURITY_ANALYSIS_FLAGS = Object.keys(SECURITY_ANALYSIS_KEYS)
 //     without Advanced Security) → emit nothing. Re-proposing it is the
 //     perpetual "failed to apply secretScanning: not available" loop the worker
 //     logs every tick on free-plan repos.
-// When we couldn't read actual state (GET failed → actualRepo null, or no
-// security_and_analysis block) we fail open and propose the change as before.
+// When we couldn't read actual state (GET failed → actualRepo null) we fail
+// open and propose the change as before.
 const planSecurityAnalysisFlag = (key, desired, actualRepo, summary) => {
   if (desired[key] === undefined) return []
   const change = [{ kind: key, id: key, summary, value: desired[key], riskLevel: 'low' }]
-  const saa = actualRepo && actualRepo.security_and_analysis
-  if (!saa) return change
+  if (!actualRepo) return change
+  const saa = actualRepo.security_and_analysis
+  // No security_and_analysis block at all on a private repo means these
+  // features don't exist for it (no Advanced Security). Public repos always
+  // report the block, so a missing one there is unexpected — fail open.
+  if (!saa) return actualRepo.private ? [] : change
   const field = saa[SECURITY_ANALYSIS_KEYS[key]]
   if (!field) return []
   const enabled = field.status === 'enabled'
@@ -383,6 +420,41 @@ const fetchFileContent = async (octokit, owner, repo, path, ref) => {
   }
 }
 
+// The templated-files fix is delivered as a PR from `repomanager_files`, not
+// as a commit to the default branch. So while that PR sits unmerged, diffing
+// against the default branch reports the same drift forever and the applier
+// force-pushes an identical commit on every tick — the "every repo got pushed
+// again" churn. If an open PR already carries exactly what we want, the ball
+// is in the human's court and there is nothing for us to do.
+const FILES_BRANCH = 'repomanager_files'
+
+const alreadyOnFilesBranch = async (octokit, repo, toWrite) => {
+  let open
+  try {
+    const { data } = await octokit.rest.pulls.list({
+      owner: repo.owner.login,
+      repo: repo.name,
+      head: `${repo.owner.login}:${FILES_BRANCH}`,
+      state: 'open',
+      per_page: 1,
+    })
+    open = data && data.length ? data[0] : null
+  } catch {
+    return false
+  }
+  if (!open) return false
+  for (const [path, content] of Object.entries(toWrite)) {
+    let onBranch
+    try {
+      onBranch = await fetchFileContent(octokit, repo.owner.login, repo.name, path, FILES_BRANCH)
+    } catch {
+      return false
+    }
+    if (onBranch !== content) return false
+  }
+  return true
+}
+
 // Decide which files actually need writing. A `presence` file only needs
 // writing if missing — and gets `{{year}}` rendered at plan time. A normal
 // file needs writing if missing or if content differs. The applier writes
@@ -412,6 +484,7 @@ const planFiles = async (octokit, repo, desired) => {
     }
   }
   if (!Object.keys(toWrite).length) return []
+  if (await alreadyOnFilesBranch(octokit, repo, toWrite)) return []
   const names = Object.keys(toWrite)
   return [
     {
@@ -441,14 +514,22 @@ const planRepo = async (octokit, repo, desired) => {
     : null
 
   changes.push(
-    ...planSimpleFlag('vulnerabilityAlerts', desired, `Set vulnerability alerts to ${desired.vulnerabilityAlerts}`),
+    ...(await planSimpleFlag(
+      octokit,
+      repo,
+      'vulnerabilityAlerts',
+      desired,
+      `Set vulnerability alerts to ${desired.vulnerabilityAlerts}`,
+    )),
   )
   changes.push(
-    ...planSimpleFlag(
+    ...(await planSimpleFlag(
+      octokit,
+      repo,
       'automatedSecurityFixes',
       desired,
       `Set automated security fixes to ${desired.automatedSecurityFixes}`,
-    ),
+    )),
   )
   changes.push(
     ...planSecurityAnalysisFlag('secretScanning', desired, actualRepo, `Set secret scanning to ${desired.secretScanning}`),
@@ -462,11 +543,13 @@ const planRepo = async (octokit, repo, desired) => {
     ),
   )
   changes.push(
-    ...planSimpleFlag(
+    ...(await planSimpleFlag(
+      octokit,
+      repo,
       'privateVulnerabilityReporting',
       desired,
       `Set private vulnerability reporting to ${desired.privateVulnerabilityReporting}`,
-    ),
+    )),
   )
   changes.push(
     ...planSecurityAnalysisFlag(

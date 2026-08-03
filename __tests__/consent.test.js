@@ -197,13 +197,53 @@ describe('upsertConsentIssue', () => {
     expect(octokit.rest.search.issuesAndPullRequests).not.toHaveBeenCalled()
   })
 
-  it('still uses search when there are changes to propose', async () => {
+  it('reads only the open issue list on the no-drift path', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
+    await upsertConsentIssue(octokit, makeRepo(), [])
+    // Closing an open issue is the only action available with no changes, so
+    // the closed-issue list is a read we never use.
+    expect(octokit.rest.issues.listForRepo.mock.calls.map((c) => c[0].state)).toEqual(['open'])
+  })
+
+  it('does not create the consent label on repos that never need one', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
+    octokit.rest.issues.getLabel.mockRejectedValue(notFoundError())
+    await upsertConsentIssue(octokit, makeRepo(), [])
+    expect(octokit.rest.issues.createLabel).not.toHaveBeenCalled()
+  })
+
+  it('skips the write when the rendered body already matches the issue', async () => {
+    const octokit = createMockOctokit()
+    const changes = [{ id: 'bp:main', kind: 'branchProtection', summary: 'bp' }]
+    octokit.rest.issues.listForRepo.mockResolvedValue({
+      data: [{ number: 5, title: ISSUE_TITLE, state: 'open', body: renderPlan(changes) }],
+    })
+    await upsertConsentIssue(octokit, makeRepo(), changes)
+    // Standing drift nobody has ticked hits this every tick — an identical PUT
+    // costs a write and bounces back as a billed issues.edited webhook.
+    expect(octokit.rest.issues.update).not.toHaveBeenCalled()
+  })
+
+  it('uses search before creating, to rule out an issue the index is hiding', async () => {
     const octokit = createMockOctokit()
     octokit.rest.issues.listForRepo.mockResolvedValue({ data: [] })
     await upsertConsentIssue(octokit, makeRepo(), [
       { id: 'bp:main', kind: 'branchProtection', summary: 'bp' },
     ])
     expect(octokit.rest.search.issuesAndPullRequests).toHaveBeenCalled()
+  })
+
+  it('does not hit search when the lists already found the issue', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.issues.listForRepo.mockResolvedValue({
+      data: [{ number: 5, title: ISSUE_TITLE, state: 'open', body: 'old' }],
+    })
+    await upsertConsentIssue(octokit, makeRepo(), [
+      { id: 'bp:main', kind: 'branchProtection', summary: 'bp' },
+    ])
+    expect(octokit.rest.search.issuesAndPullRequests).not.toHaveBeenCalled()
   })
 
   it('reuses an existing issue surfaced only by the search index', async () => {

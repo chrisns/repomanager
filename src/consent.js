@@ -152,7 +152,18 @@ const ensureLabel = async (octokit, owner, repo, name, color, description) => {
 // includeSearch=false to skip it; only paths that genuinely need the extra
 // belt-and-braces coverage (right after creating an issue, racing a stale
 // index) keep it on.
-const collectIssuesByLabel = async (octokit, owner, repo, label, title, includeSearch = true) => {
+// `states` narrows which issue lists we read. Callers that only ever act on an
+// open issue pass ['open'] and halve the reads — on a fleet swept every tick
+// that closed-issue list was pure overhead.
+const collectIssuesByLabel = async (
+  octokit,
+  owner,
+  repo,
+  label,
+  title,
+  includeSearch = true,
+  states = ['open', 'closed'],
+) => {
   const byNumber = new Map()
   const ingest = (arr) => {
     if (!Array.isArray(arr)) return
@@ -188,7 +199,7 @@ const collectIssuesByLabel = async (octokit, owner, repo, label, title, includeS
     }
   }
 
-  for (const state of ['open', 'closed']) {
+  for (const state of states) {
     try {
       const { data } = await octokit.rest.issues.listForRepo({
         owner,
@@ -219,10 +230,15 @@ const pickCanonicalIssue = (issues) => {
   return sorted[0]
 }
 
+// Only ever used to find an issue we're about to edit or close, so it reads
+// the open list alone and skips the search endpoint entirely. Search is
+// GitHub's most throttled API (30 req/min) and octokit pre-emptively
+// serialises it to ~2s per call — on the invalid-config lookup that every repo
+// performs on every tick it was the single largest chunk of billed wall-clock,
+// spent almost always to discover that no issue exists.
 const findOpenIssueByLabel = async (octokit, owner, repo, label, title) => {
-  const all = await collectIssuesByLabel(octokit, owner, repo, label, title)
-  const open = all.filter((i) => i.state === 'open')
-  return pickCanonicalIssue(open)
+  const all = await collectIssuesByLabel(octokit, owner, repo, label, title, false, ['open'])
+  return pickCanonicalIssue(all.filter((i) => i.state === 'open'))
 }
 
 const findIssueByLabelAnyState = async (octokit, owner, repo, label, title) => {
@@ -288,31 +304,39 @@ const upsertConsentIssue = async (octokit, repo, changes) => {
 }
 
 const upsertConsentIssueInner = async (octokit, repo, changes, owner, name) => {
-  await ensureLabel(
-    octokit,
-    owner,
-    name,
-    CONSENT_LABEL,
-    '0e8a16',
-    'repomanager: pending config changes awaiting approval',
-  )
   // Proactive dedup: every time we touch the consent issue we first union
   // all matching issues (search + open + closed lists) and close every open
   // duplicate above the lowest issue number. This is the bot tidying up
   // after itself across past loops, even on cron ticks where there are no
   // changes to propose.
-  // On the common no-drift tick (changes empty) we only need to find an
-  // existing open issue to close — the list union does that without the
-  // expensive search call. Reserve search for ticks that actually have changes
-  // to propose, where missing a stale duplicate is worth the extra read.
-  const allMatching = await collectIssuesByLabel(
+  // On the common no-drift tick (changes empty) the only action available is
+  // closing an open issue, so read the open list alone and skip the closed
+  // list entirely.
+  let allMatching = await collectIssuesByLabel(
     octokit,
     owner,
     name,
     CONSENT_LABEL,
     ISSUE_TITLE,
-    changes.length > 0,
+    false,
+    changes.length ? ['open', 'closed'] : ['open'],
   )
+  // Search exists here purely to stop us creating a duplicate when the issues
+  // index serves a stale empty list — so only pay for it when the lists came
+  // back empty and we're about to create. It's GitHub's most throttled API and
+  // octokit serialises it to ~2s a call; on a repo with standing drift we were
+  // buying that on every tick to re-find an issue we already had.
+  if (changes.length && !allMatching.length) {
+    allMatching = await collectIssuesByLabel(
+      octokit,
+      owner,
+      name,
+      CONSENT_LABEL,
+      ISSUE_TITLE,
+      true,
+      ['open', 'closed'],
+    )
+  }
   const openMatching = allMatching.filter((i) => i.state === 'open')
   if (openMatching.length > 1) {
     const winner = pickCanonicalIssue(openMatching)
@@ -335,6 +359,14 @@ const upsertConsentIssueInner = async (octokit, repo, changes, owner, name) => {
 
   if (!existing) {
     if (!changes.length) return null
+    await ensureLabel(
+      octokit,
+      owner,
+      name,
+      CONSENT_LABEL,
+      '0e8a16',
+      'repomanager: pending config changes awaiting approval',
+    )
     const { data } = await octokit.rest.issues.create({
       owner,
       repo: name,
@@ -416,6 +448,12 @@ const upsertConsentIssueInner = async (octokit, repo, changes, owner, name) => {
     // All current changes already applied in the closed issue — leave it.
     return existing
   }
+
+  // Nothing to say that isn't already on the issue. Re-PUTing an identical
+  // body costs a write, and GitHub redelivers it as an `issues.edited` webhook
+  // — a billed Lambda invocation we immediately throw away. Standing drift
+  // that nobody has ticked yet hits this every single tick.
+  if (update.state === undefined && existing.body === body) return existing
 
   await octokit.rest.issues.update(update)
   return existing
