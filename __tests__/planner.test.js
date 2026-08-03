@@ -646,6 +646,117 @@ describe('planRepo drift detection', () => {
       expect(changes.find((c) => c.kind === 'files')).toBeTruthy()
     })
   })
+
+  describe('templated files already on an open PR', () => {
+    // The fix ships as a PR from `repomanager_files`; the default branch stays
+    // stale until a human merges it. Without this check the planner reports the
+    // same drift on every tick and the applier force-pushes the same commit.
+    const openFilesPr = (octokit) =>
+      octokit.rest.pulls.list.mockResolvedValue({ data: [{ number: 2, state: 'open' }] })
+
+    const contentByRef = (octokit, byRef) =>
+      octokit.rest.repos.getContent.mockImplementation(async ({ path, ref }) => {
+        const value = (byRef[ref] || {})[path]
+        if (value === undefined) {
+          const err = new Error('Not Found')
+          err.status = 404
+          throw err
+        }
+        return { data: { type: 'file', content: Buffer.from(value, 'utf8').toString('base64') } }
+      })
+
+    it('emits nothing when the open PR already carries exactly the desired content', async () => {
+      const octokit = createMockOctokit()
+      openFilesPr(octokit)
+      contentByRef(octokit, { repomanager_files: { 'LICENSE': 'NEW' } })
+      const changes = await planRepo(octokit, makeRepo(), { files: { 'LICENSE': 'NEW' } })
+      expect(changes.filter((c) => c.kind === 'files')).toEqual([])
+    })
+
+    it('still emits when the open PR carries stale content', async () => {
+      const octokit = createMockOctokit()
+      openFilesPr(octokit)
+      contentByRef(octokit, { repomanager_files: { 'LICENSE': 'OLD' } })
+      const changes = await planRepo(octokit, makeRepo(), { files: { 'LICENSE': 'NEW' } })
+      expect(changes.find((c) => c.kind === 'files')).toBeTruthy()
+    })
+
+    it('still emits when there is no open PR to carry the change', async () => {
+      const octokit = createMockOctokit() // pulls.list → []
+      const changes = await planRepo(octokit, makeRepo(), { files: { 'LICENSE': 'NEW' } })
+      expect(changes.find((c) => c.kind === 'files')).toBeTruthy()
+    })
+  })
+})
+
+describe('planRepo endpoint-backed flag diffing', () => {
+  const flagConfig = {
+    vulnerabilityAlerts: true,
+    automatedSecurityFixes: true,
+    privateVulnerabilityReporting: true,
+  }
+  const flagKinds = Object.keys(flagConfig)
+
+  it('emits nothing when all three are already enabled', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.checkVulnerabilityAlerts.mockResolvedValue({ data: {} })
+    octokit.rest.repos.checkAutomatedSecurityFixes.mockResolvedValue({ data: { enabled: true } })
+    octokit.rest.repos.checkPrivateVulnerabilityReporting.mockResolvedValue({
+      data: { enabled: true },
+    })
+    const changes = await planRepo(octokit, makeRepo(), flagConfig)
+    expect(changes.filter((c) => flagKinds.includes(c.kind))).toEqual([])
+  })
+
+  it('emits only the flag that actually drifts', async () => {
+    const octokit = createMockOctokit()
+    const notFound = new Error('Not Found')
+    notFound.status = 404
+    octokit.rest.repos.checkVulnerabilityAlerts.mockRejectedValue(notFound)
+    octokit.rest.repos.checkAutomatedSecurityFixes.mockResolvedValue({ data: { enabled: true } })
+    octokit.rest.repos.checkPrivateVulnerabilityReporting.mockResolvedValue({
+      data: { enabled: true },
+    })
+    const changes = await planRepo(octokit, makeRepo(), flagConfig)
+    expect(changes.filter((c) => flagKinds.includes(c.kind)).map((c) => c.kind)).toEqual([
+      'vulnerabilityAlerts',
+    ])
+  })
+
+  it('never proposes private vulnerability reporting on a private repo', async () => {
+    const octokit = createMockOctokit()
+    const changes = await planRepo(octokit, makeRepo({ private: true }), {
+      privateVulnerabilityReporting: true,
+    })
+    expect(changes).toEqual([])
+    expect(octokit.rest.repos.checkPrivateVulnerabilityReporting).not.toHaveBeenCalled()
+  })
+
+  it('fails open and emits when the state read fails', async () => {
+    const octokit = createMockOctokit() // defaults reject with a generic error
+    const changes = await planRepo(octokit, makeRepo(), flagConfig)
+    expect(changes.filter((c) => flagKinds.includes(c.kind)).map((c) => c.kind)).toEqual(flagKinds)
+  })
+})
+
+describe('planRepo security-and-analysis on a private repo', () => {
+  it('skips the flags entirely when GitHub reports no security_and_analysis block', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.get.mockResolvedValue({ data: { private: true, security_and_analysis: null } })
+    const changes = await planRepo(octokit, makeRepo({ private: true }), {
+      secretScanning: true,
+      secretScanningPushProtection: true,
+      dependabotSecurityUpdates: true,
+    })
+    expect(changes).toEqual([])
+  })
+
+  it('still fails open on a public repo missing the block', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.get.mockResolvedValue({ data: { private: false } })
+    const changes = await planRepo(octokit, makeRepo(), { secretScanning: true })
+    expect(changes.map((c) => c.kind)).toEqual(['secretScanning'])
+  })
 })
 
 describe('splitByRisk', () => {
