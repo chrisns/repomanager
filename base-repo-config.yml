@@ -27,9 +27,25 @@ rulesets:
       - type: required_linear_history
       - type: pull_request
         parameters:
-          # 0 — PRs are still required, but a single maintainer can self-
-          # merge without waiting for an approval. The other PR-rule
-          # parameters become moot at 0 reviews so are dropped.
+          # Every parameter below must be present. They look moot at 0 required
+          # reviews, but GitHub's create-ruleset endpoint rejects a partial
+          # `pull_request` rule outright ("Invalid property /rules/3: data
+          # matches no possible input"). Dropping them only broke *new* repos —
+          # rulesets created earlier still carry the full set and our subset
+          # comparison kept matching them, so the breakage stayed invisible
+          # until a repo needed the ruleset created from scratch.
+          #
+          # 0 — PRs are still required, but a single maintainer can self-merge
+          # without waiting for an approval.
           required_approving_review_count: 0
+          dismiss_stale_reviews_on_push: true
           require_code_owner_review: false
+          require_last_push_approval: false
           required_review_thread_resolution: true
+          # `merge` stays listed to match the rulesets already deployed across
+          # the fleet, so this fix doesn't propose an update on every repo. The
+          # repo-level `allow_merge_commit: false` is what actually blocks it.
+          allowed_merge_methods:
+            - merge
+            - squash
+            - rebase
