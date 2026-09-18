@@ -35,7 +35,7 @@
     "markdownlint-cli": "0.49.1",
     "nock": "^14.0.0",
     "npm-run-all2": "9.0.3",
-    "prettier": "3.9.7"
+    "prettier": "3.9.8"
   },
   "prettier": {
     "singleQuote": true,
