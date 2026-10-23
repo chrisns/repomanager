@@ -132,6 +132,47 @@ describe('processRepo', () => {
   })
 })
 
+describe('processRepo forks', () => {
+  const notFound = () => Object.assign(new Error('nf'), { status: 404 })
+
+  it('turns off issues and pull requests on a fork and changes nothing else', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.getContent.mockRejectedValue(notFound())
+
+    const result = await processRepo(octokit, makeRepo({ fork: true }))
+    expect(result.applied).toBe(1)
+    expect(octokit.rest.repos.update).toHaveBeenCalledWith(
+      expect.objectContaining({ has_issues: false, has_pull_requests: false }),
+    )
+    expect(octokit.rest.repos.enableVulnerabilityAlerts).not.toHaveBeenCalled()
+    expect(octokit.rest.issues.create).not.toHaveBeenCalled()
+  })
+
+  it('skips a fork when the config opts out', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.getContent
+      .mockRejectedValueOnce(notFound())
+      .mockResolvedValueOnce({
+        data: { content: base64('disableIssuesAndPullRequestsOnForks: false') },
+      })
+
+    const result = await processRepo(octokit, makeRepo({ fork: true }))
+    expect(result).toEqual({ skipped: true, reason: 'filtered' })
+    expect(octokit.rest.repos.update).not.toHaveBeenCalled()
+  })
+
+  it('skips a fork with an invalid config and opens no issue', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.getContent
+      .mockRejectedValueOnce(notFound())
+      .mockResolvedValueOnce({ data: { content: base64('vulnerabilityAlerts: "nope"') } })
+
+    const result = await processRepo(octokit, makeRepo({ fork: true }))
+    expect(result).toEqual({ skipped: true, reason: 'filtered' })
+    expect(octokit.rest.issues.create).not.toHaveBeenCalled()
+  })
+})
+
 describe('applyConsentedChanges', () => {
   it('applies only the checked items', async () => {
     const octokit = createMockOctokit()

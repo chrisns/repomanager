@@ -115,6 +115,8 @@ const applyChange = async (octokit, repo, change) => {
       return applyRuleset(octokit, repo, change)
     case 'repo':
       return applyRepoUpdate(octokit, repo, change.config)
+    case 'forkSettings':
+      return applyRepoUpdate(octokit, repo, change.config)
     case 'files':
       return applyFiles(octokit, repo, change.files)
     default:

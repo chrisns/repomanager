@@ -104,8 +104,9 @@ branchProtection:
     restrictions: null
 
 # -- forks: turn off issues and pull requests --------------------------------
-# When true and the repo is a fork, `has_issues` and `has_pull_requests` are
-# forced to false, overriding the `repo` block below.
+# When true, a fork gets `has_issues` and `has_pull_requests` set to false.
+# The bot applies this at once, with no consent issue, and changes nothing else
+# on a fork. When false or absent, the bot ignores forks.
 disableIssuesAndPullRequestsOnForks: true
 
 # -- arbitrary octokit repos.update fields -----------------------------------

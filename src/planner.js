@@ -10,6 +10,7 @@ const LOW_RISK_KINDS = new Set([
   'secretScanningPushProtection',
   'privateVulnerabilityReporting',
   'dependabotSecurityUpdates',
+  'forkSettings',
   'files',
 ])
 
@@ -374,33 +375,39 @@ const repoSettingsMatch = (actual, desiredRepo, repo) => {
   })
 }
 
-// Forks inherit issues and pull requests that nobody watches. When
-// `disableIssuesAndPullRequestsOnForks` is on, a fork's desired settings turn
-// both off, overriding whatever the `repo` block asks for.
-const FORK_OVERRIDES = { has_issues: false, has_pull_requests: false }
-
-const effectiveRepoSettings = (repo, desired) => {
-  const base = desired.repo || {}
-  if (desired.disableIssuesAndPullRequestsOnForks && repo.fork) {
-    return { ...base, ...FORK_OVERRIDES }
-  }
-  return base
-}
-
 const planRepoUpdate = (repo, desired, actual) => {
-  const settings = effectiveRepoSettings(repo, desired)
-  if (Object.keys(settings).length === 0) return []
+  if (!desired.repo || Object.keys(desired.repo).length === 0) return []
   // `actual` is the repo record fetched once per plan (planRepo). It is null
   // when the GET failed — fall back to assuming drift, better a no-op apply
   // than silently missing real drift.
-  if (repoSettingsMatch(actual, settings, repo)) return []
+  if (repoSettingsMatch(actual, desired.repo, repo)) return []
   return [
     {
       kind: 'repo',
       id: 'repo:update',
-      summary: `Update repository settings (${Object.keys(settings).join(', ')})`,
-      config: settings,
+      summary: `Update repository settings (${Object.keys(desired.repo).join(', ')})`,
+      config: desired.repo,
       riskLevel: 'high',
+    },
+  ]
+}
+
+// Forks collect issues and pull requests that nobody watches. When
+// `disableIssuesAndPullRequestsOnForks` is on, a fork gets both turned off.
+// This is low risk and skips the consent issue: the config opt-in is the
+// consent, and a consent issue cannot outlive the issues feature it lives in.
+const FORK_SETTINGS = { has_issues: false, has_pull_requests: false }
+
+const planForkSettings = (repo, desired, actual) => {
+  if (!desired.disableIssuesAndPullRequestsOnForks || !repo.fork) return []
+  if (repoSettingsMatch(actual, FORK_SETTINGS, repo)) return []
+  return [
+    {
+      kind: 'forkSettings',
+      id: 'forkSettings',
+      summary: 'Turn off issues and pull requests on this fork',
+      config: FORK_SETTINGS,
+      riskLevel: 'low',
     },
   ]
 }
@@ -586,6 +593,7 @@ const planRepo = async (octokit, repo, desired) => {
     changes.push(...(await planRulesets(octokit, repo, desired.rulesets)))
   }
   changes.push(...planRepoUpdate(repo, desired, actualRepo))
+  changes.push(...planForkSettings(repo, desired, actualRepo))
   changes.push(...(await planFiles(octokit, repo, desired)))
 
   return changes

@@ -21,13 +21,22 @@ const isDryRun = () => process.env.DRY_RUN === 'true'
 // going wrong and we want to keep the cron paused while we debug.
 const isReadOnly = () => process.env.READ_ONLY === 'true'
 
-const shouldProcessRepo = (repo) => !repo.fork && !repo.disabled && !repo.archived
+const shouldProcessRepo = (repo) => !repo.disabled && !repo.archived
 
 const processRepo = async (octokit, repo) => {
   if (!shouldProcessRepo(repo)) return { skipped: true, reason: 'filtered' }
 
-  const { config, errors } = await getRepoConfig(repo.name, repo.owner.login, octokit)
+  let { config, errors } = await getRepoConfig(repo.name, repo.owner.login, octokit)
   const slug = `${repo.owner.login}/${repo.name}`
+  // Forks are otherwise left alone. The one thing we manage on them is the
+  // issues and pull requests switch, and only when the config opts in. An
+  // invalid config on a fork is ignored: it is not ours to raise issues on.
+  if (repo.fork) {
+    if (errors || !config.disableIssuesAndPullRequestsOnForks) {
+      return { skipped: true, reason: 'filtered' }
+    }
+    config = { disableIssuesAndPullRequestsOnForks: true }
+  }
   if (isReadOnly()) {
     if (errors) {
       console.info(`[read-only] ${slug}: invalid repo-config.yml — would open invalid-config issue`)
