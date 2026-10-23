@@ -103,6 +103,11 @@ branchProtection:
     required_pull_request_reviews: null
     restrictions: null
 
+# -- forks: turn off issues and pull requests --------------------------------
+# When true and the repo is a fork, `has_issues` and `has_pull_requests` are
+# forced to false, overriding the `repo` block below.
+disableIssuesAndPullRequestsOnForks: true
+
 # -- arbitrary octokit repos.update fields -----------------------------------
 repo:
   # https://octokit.github.io/rest.js/#repos-update

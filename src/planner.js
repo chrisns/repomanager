@@ -365,23 +365,41 @@ const isUnattainableSetting = (key, desiredValue, actual, repo) => {
 const repoSettingsMatch = (actual, desiredRepo, repo) => {
   if (!actual) return false
   return Object.entries(desiredRepo).every(([k, v]) => {
+    // Hosts that predate the `has_pull_requests` setting never report it, so
+    // the actual value stays undefined after every PATCH. Treat that as
+    // converged rather than as perpetual drift.
+    if (k === 'has_pull_requests' && actual[k] === undefined) return true
     if (isUnattainableSetting(k, v, actual[k], repo)) return true
     return actual[k] === v
   })
 }
 
+// Forks inherit issues and pull requests that nobody watches. When
+// `disableIssuesAndPullRequestsOnForks` is on, a fork's desired settings turn
+// both off, overriding whatever the `repo` block asks for.
+const FORK_OVERRIDES = { has_issues: false, has_pull_requests: false }
+
+const effectiveRepoSettings = (repo, desired) => {
+  const base = desired.repo || {}
+  if (desired.disableIssuesAndPullRequestsOnForks && repo.fork) {
+    return { ...base, ...FORK_OVERRIDES }
+  }
+  return base
+}
+
 const planRepoUpdate = (repo, desired, actual) => {
-  if (!desired.repo || Object.keys(desired.repo).length === 0) return []
+  const settings = effectiveRepoSettings(repo, desired)
+  if (Object.keys(settings).length === 0) return []
   // `actual` is the repo record fetched once per plan (planRepo). It is null
   // when the GET failed — fall back to assuming drift, better a no-op apply
   // than silently missing real drift.
-  if (repoSettingsMatch(actual, desired.repo, repo)) return []
+  if (repoSettingsMatch(actual, settings, repo)) return []
   return [
     {
       kind: 'repo',
       id: 'repo:update',
-      summary: `Update repository settings (${Object.keys(desired.repo).join(', ')})`,
-      config: desired.repo,
+      summary: `Update repository settings (${Object.keys(settings).join(', ')})`,
+      config: settings,
       riskLevel: 'high',
     },
   ]
@@ -508,7 +526,8 @@ const planRepo = async (octokit, repo, desired) => {
   // diffs fail open and behave as before.
   const needsRepoRecord =
     SECURITY_ANALYSIS_FLAGS.some((k) => desired[k] !== undefined) ||
-    (desired.repo && Object.keys(desired.repo).length > 0)
+    (desired.repo && Object.keys(desired.repo).length > 0) ||
+    (desired.disableIssuesAndPullRequestsOnForks && repo.fork)
   const actualRepo = needsRepoRecord
     ? await fetchRepoSettings(octokit, repo.owner.login, repo.name).catch(() => null)
     : null

@@ -856,3 +856,65 @@ describe('planRepo security-and-analysis flag diffing', () => {
     expect(octokit.rest.repos.get).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('planRepo fork settings', () => {
+  const desired = {
+    disableIssuesAndPullRequestsOnForks: true,
+    repo: { has_issues: true, has_wiki: false },
+  }
+
+  it('turns off issues and pull requests on a fork', async () => {
+    const octokit = createMockOctokit()
+    const changes = await planRepo(octokit, makeRepo({ fork: true }), desired)
+    const update = changes.find((c) => c.kind === 'repo')
+    expect(update.config).toEqual({
+      has_issues: false,
+      has_wiki: false,
+      has_pull_requests: false,
+    })
+  })
+
+  it('leaves a non-fork repo unchanged', async () => {
+    const octokit = createMockOctokit()
+    const changes = await planRepo(octokit, makeRepo({ fork: false }), desired)
+    expect(changes.find((c) => c.kind === 'repo').config).toEqual(desired.repo)
+  })
+
+  it('does nothing for a fork when the option is off', async () => {
+    const octokit = createMockOctokit()
+    const changes = await planRepo(octokit, makeRepo({ fork: true }), {
+      disableIssuesAndPullRequestsOnForks: false,
+      repo: { has_issues: true },
+    })
+    expect(changes.find((c) => c.kind === 'repo').config).toEqual({ has_issues: true })
+  })
+
+  it('plans the update when the repo block is empty', async () => {
+    const octokit = createMockOctokit()
+    const changes = await planRepo(octokit, makeRepo({ fork: true }), {
+      disableIssuesAndPullRequestsOnForks: true,
+    })
+    expect(changes.find((c) => c.kind === 'repo').config).toEqual({
+      has_issues: false,
+      has_pull_requests: false,
+    })
+  })
+
+  it('emits no change once the fork already matches', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.get = jest.fn(async () => ({
+      data: { has_issues: false, has_pull_requests: false, has_wiki: false },
+    }))
+    const changes = await planRepo(octokit, makeRepo({ fork: true }), desired)
+    expect(changes.find((c) => c.kind === 'repo')).toBeUndefined()
+  })
+
+  it('treats a missing has_pull_requests field as converged', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.get = jest.fn(async () => ({
+      data: { has_issues: false, has_wiki: false },
+    }))
+    const changes = await planRepo(octokit, makeRepo({ fork: true }), desired)
+    expect(changes.find((c) => c.kind === 'repo')).toBeUndefined()
+  })
+})

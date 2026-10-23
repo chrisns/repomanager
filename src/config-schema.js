@@ -82,6 +82,8 @@ const RepoConfig = z
     secretScanningPushProtection: z.boolean().optional(),
     privateVulnerabilityReporting: z.boolean().optional(),
     dependabotSecurityUpdates: z.boolean().optional(),
+    // When true, forks get `has_issues: false` and `has_pull_requests: false`.
+    disableIssuesAndPullRequestsOnForks: z.boolean().optional(),
     branchProtection: z.array(BranchProtection).optional(),
     rulesets: z.array(Ruleset).optional(),
     repo: z.record(z.string(), z.unknown()).optional(),
