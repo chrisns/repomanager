@@ -103,6 +103,12 @@ branchProtection:
     required_pull_request_reviews: null
     restrictions: null
 
+# -- forks: turn off issues and pull requests --------------------------------
+# When true, a fork gets `has_issues` and `has_pull_requests` set to false.
+# The bot applies this at once, with no consent issue, and changes nothing else
+# on a fork. When false or absent, the bot ignores forks.
+disableIssuesAndPullRequestsOnForks: true
+
 # -- arbitrary octokit repos.update fields -----------------------------------
 repo:
   # https://octokit.github.io/rest.js/#repos-update

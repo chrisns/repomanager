@@ -4,6 +4,7 @@ secretScanning: true
 secretScanningPushProtection: true
 privateVulnerabilityReporting: true
 dependabotSecurityUpdates: true
+disableIssuesAndPullRequestsOnForks: true
 
 rulesets:
   - name: repomanager-default-branch

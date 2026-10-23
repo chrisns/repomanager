@@ -856,3 +856,54 @@ describe('planRepo security-and-analysis flag diffing', () => {
     expect(octokit.rest.repos.get).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('planRepo fork settings', () => {
+  const desired = { disableIssuesAndPullRequestsOnForks: true }
+  const forkChange = (changes) => changes.find((c) => c.kind === 'forkSettings')
+
+  it('plans a low-risk change that turns off issues and pull requests on a fork', async () => {
+    const changes = await planRepo(createMockOctokit(), makeRepo({ fork: true }), desired)
+    expect(forkChange(changes)).toMatchObject({
+      riskLevel: 'low',
+      config: { has_issues: false, has_pull_requests: false },
+    })
+    expect(splitByRisk(changes).autoApply).toContain(forkChange(changes))
+  })
+
+  it('ignores a non-fork repo', async () => {
+    const changes = await planRepo(createMockOctokit(), makeRepo({ fork: false }), desired)
+    expect(forkChange(changes)).toBeUndefined()
+  })
+
+  it('ignores a fork when the option is off', async () => {
+    const changes = await planRepo(createMockOctokit(), makeRepo({ fork: true }), {
+      disableIssuesAndPullRequestsOnForks: false,
+    })
+    expect(forkChange(changes)).toBeUndefined()
+  })
+
+  it('emits no change once the fork already matches', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.get = jest.fn(async () => ({
+      data: { has_issues: false, has_pull_requests: false },
+    }))
+    const changes = await planRepo(octokit, makeRepo({ fork: true }), desired)
+    expect(forkChange(changes)).toBeUndefined()
+  })
+
+  it('plans a change when issues are still on', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.get = jest.fn(async () => ({
+      data: { has_issues: true, has_pull_requests: false },
+    }))
+    const changes = await planRepo(octokit, makeRepo({ fork: true }), desired)
+    expect(forkChange(changes)).toBeDefined()
+  })
+
+  it('treats a missing has_pull_requests field as converged', async () => {
+    const octokit = createMockOctokit()
+    octokit.rest.repos.get = jest.fn(async () => ({ data: { has_issues: false } }))
+    const changes = await planRepo(octokit, makeRepo({ fork: true }), desired)
+    expect(forkChange(changes)).toBeUndefined()
+  })
+})

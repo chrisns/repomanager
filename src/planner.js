@@ -10,6 +10,7 @@ const LOW_RISK_KINDS = new Set([
   'secretScanningPushProtection',
   'privateVulnerabilityReporting',
   'dependabotSecurityUpdates',
+  'forkSettings',
   'files',
 ])
 
@@ -365,6 +366,10 @@ const isUnattainableSetting = (key, desiredValue, actual, repo) => {
 const repoSettingsMatch = (actual, desiredRepo, repo) => {
   if (!actual) return false
   return Object.entries(desiredRepo).every(([k, v]) => {
+    // Hosts that predate the `has_pull_requests` setting never report it, so
+    // the actual value stays undefined after every PATCH. Treat that as
+    // converged rather than as perpetual drift.
+    if (k === 'has_pull_requests' && actual[k] === undefined) return true
     if (isUnattainableSetting(k, v, actual[k], repo)) return true
     return actual[k] === v
   })
@@ -383,6 +388,26 @@ const planRepoUpdate = (repo, desired, actual) => {
       summary: `Update repository settings (${Object.keys(desired.repo).join(', ')})`,
       config: desired.repo,
       riskLevel: 'high',
+    },
+  ]
+}
+
+// Forks collect issues and pull requests that nobody watches. When
+// `disableIssuesAndPullRequestsOnForks` is on, a fork gets both turned off.
+// This is low risk and skips the consent issue: the config opt-in is the
+// consent, and a consent issue cannot outlive the issues feature it lives in.
+const FORK_SETTINGS = { has_issues: false, has_pull_requests: false }
+
+const planForkSettings = (repo, desired, actual) => {
+  if (!desired.disableIssuesAndPullRequestsOnForks || !repo.fork) return []
+  if (repoSettingsMatch(actual, FORK_SETTINGS, repo)) return []
+  return [
+    {
+      kind: 'forkSettings',
+      id: 'forkSettings',
+      summary: 'Turn off issues and pull requests on this fork',
+      config: FORK_SETTINGS,
+      riskLevel: 'low',
     },
   ]
 }
@@ -508,7 +533,8 @@ const planRepo = async (octokit, repo, desired) => {
   // diffs fail open and behave as before.
   const needsRepoRecord =
     SECURITY_ANALYSIS_FLAGS.some((k) => desired[k] !== undefined) ||
-    (desired.repo && Object.keys(desired.repo).length > 0)
+    (desired.repo && Object.keys(desired.repo).length > 0) ||
+    (desired.disableIssuesAndPullRequestsOnForks && repo.fork)
   const actualRepo = needsRepoRecord
     ? await fetchRepoSettings(octokit, repo.owner.login, repo.name).catch(() => null)
     : null
@@ -567,6 +593,7 @@ const planRepo = async (octokit, repo, desired) => {
     changes.push(...(await planRulesets(octokit, repo, desired.rulesets)))
   }
   changes.push(...planRepoUpdate(repo, desired, actualRepo))
+  changes.push(...planForkSettings(repo, desired, actualRepo))
   changes.push(...(await planFiles(octokit, repo, desired)))
 
   return changes
